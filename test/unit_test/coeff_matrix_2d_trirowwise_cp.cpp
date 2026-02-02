@@ -17,7 +17,7 @@ using namespace dso;
  */
 
 int main() {
-  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> mat1(4, 4);
+  CoeffMatrix2D<MatrixStorageType::LwTriangularRowWise> mat1(4, 4);
   assert(mat1.num_elements() == 10);
   assert(mat1.rows() == 4);
   assert(mat1.cols() == 4);
@@ -40,12 +40,21 @@ int main() {
     assert(mat2(1, 0) == 5);
     assert(mat2(1, 1) == 6);
 
-    /* get columns */
-    double *cptr = mat2.column(0);
+    /* get rows */
+    double *cptr = mat2.row(0);
     assert(*cptr == mat2(0, 0));
-    assert(*(cptr + 1) == mat2(1, 0));
-    cptr = mat2.column(1);
-    assert(*cptr == mat2(1, 1));
+    cptr = mat2.row(1);
+    assert(*cptr == mat2(1, 0));
+    assert(cptr[1] == mat2(1, 1));
+    cptr = mat2.row(2);
+    assert(*cptr == mat2(2, 0));
+    assert(cptr[1] == mat2(2, 1));
+    assert(cptr[2] == mat2(2, 2));
+    cptr = mat2.row(3);
+    assert(*cptr == mat2(3, 0));
+    assert(cptr[1] == mat2(3, 1));
+    assert(cptr[2] == mat2(3, 2));
+    assert(cptr[3] == mat2(3, 3));
   }
 
   {
@@ -61,22 +70,6 @@ int main() {
     assert(mat2(2, 2) == 11);
     assert(mat2(3, 2) == 15);
     assert(mat2(3, 3) == 16);
-
-    /* get columns */
-    double *cptr = mat2.column(0);
-    assert(*cptr == mat2(0, 0));
-    assert(*(cptr + 1) == mat2(1, 0));
-    assert(*(cptr + 2) == mat2(2, 0));
-    assert(*(cptr + 3) == mat2(3, 0));
-    cptr = mat2.column(1);
-    assert(*cptr == mat2(1, 1));
-    assert(*(cptr + 1) == mat2(2, 1));
-    assert(*(cptr + 2) == mat2(3, 1));
-    cptr = mat2.column(2);
-    assert(*cptr == mat2(2, 2));
-    assert(*(cptr + 1) == mat2(3, 2));
-    cptr = mat2.column(3);
-    assert(*cptr == mat2(3, 3));
   }
 
   {
@@ -84,8 +77,8 @@ int main() {
     mat2.cresize(1, 1);
     assert(mat2(0, 0) == 1);
 
-    /* get columns */
-    double *cptr = mat2.column(0);
+    /* get rows */
+    double *cptr = mat2.row(0);
     assert(*cptr == mat2(0, 0));
   }
 

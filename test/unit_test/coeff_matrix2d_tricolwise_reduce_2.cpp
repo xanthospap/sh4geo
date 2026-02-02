@@ -34,7 +34,7 @@ int main() {
   mat3 += 1e0 * mat1.reduced_view(399, 399) + 2e0 * mat2.reduced_view(399, 399);
   assert(mat3.rows() == 499);
   assert(mat3.cols() == 499);
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < 499; i++) {
     for (int j = 0; j <= i; j++) {
       if (i < 399 && j < 399)
         assert(mat3(i, j) == 2e0 * (1e0 * mat1(i, j) + 2e0 * mat2(i, j)));
