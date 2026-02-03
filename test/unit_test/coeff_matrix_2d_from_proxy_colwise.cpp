@@ -26,7 +26,7 @@ auto almost_equal = [](double a, double b) {
  */
 
 int main() {
-  CoeffMatrix2D<MatrixStorageType::RowWise> mat1(10, 10);
+  CoeffMatrix2D<MatrixStorageType::ColumnWise> mat1(10, 10);
 
   /* fill in */
   for (int i = 0; i < mat1.rows(); i++) {
@@ -36,7 +36,7 @@ int main() {
     }
 
     auto expr = 2.0 * mat1.reduced_view(7,4);
-    CoeffMatrix2D<MatrixStorageType::RowWise> B(expr);
+    CoeffMatrix2D<MatrixStorageType::ColumnWise> B(expr);
 
     assert(B.rows()==7);
     assert(B.cols() == 4);
@@ -47,7 +47,7 @@ int main() {
       }
     }
 
-    CoeffMatrix2D<MatrixStorageType::RowWise> C(2.0 * mat1.reduced_view(7,4));
+    CoeffMatrix2D<MatrixStorageType::ColumnWise> C(2.0 * mat1.reduced_view(7,4));
     assert(C.rows()==7);
     assert(C.cols() == 4);
 

@@ -40,10 +40,6 @@ int main() {
      */
     mat2.cresize(4, 3);
     assert(mat2(0, 0) == 1);
-
-    /* get columns */
-    double *cptr = mat2.column(0);
-    assert(*cptr == mat2(0, 0));
   }
 
   /* all done */

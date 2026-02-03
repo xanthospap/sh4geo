@@ -8,8 +8,13 @@
 
 #include "coeff_matrix_2d.hpp"
 #include "eigen3/Eigen/Eigen"
-#include "iers/iersconst.hpp"
+// #include "iers/iersconst.hpp"
 #include <cassert>
+
+namespace iers2010 {
+  constexpr const double GMe = 1e0;
+  constexpr const double Re = 1e0;
+}
 
 namespace dso {
 

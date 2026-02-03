@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdio>
+#include <stdexcept>
 #ifdef DEBUG
 #include <cassert>
 #include <cstdio>
@@ -52,24 +53,23 @@ public:
   /** Basic stride/dimension */
   static constexpr const bool isRowMajor = true;
   static constexpr const bool isColMajor = false;
-  static constexpr const bool isRectangular = true;
+  // static constexpr const bool isRectangular = true;
+  static constexpr const bool isSquare = true;
   static constexpr const bool isTriangular = true;
 
   /** Constructor; not interested in number of cols */
-  constexpr StorageImplementation(int r, [[maybe_unused]] int c) noexcept
+  constexpr StorageImplementation(int r) noexcept
       : rows(r) {
-#ifdef DEBUG
-    assert(r == c);
-#endif
-  };
+          // if ((c != -1) && (c != r)) {
+          //  throw std::runtime_error("[ERROR] Cannot initialize "
+          //                           "StorageImplementation<MatrixStorageType::"
+          //                           "LwTriangularRowWise> with
+          //                           rows!=cols!\n");
+          //}
+        };
 
   /** (Re-) set dimensions */
-  void __set_dimensions(int _rows, [[maybe_unused]] int _cols) noexcept {
-    rows = _rows;
-#ifdef DEBUG
-    assert(_rows == _cols);
-#endif
-  }
+  void __set_dimensions(int _rows) noexcept { rows = _rows; }
 
   /** @brief Compute number of elements stored */
   constexpr std::size_t num_elements() const noexcept { return _size(rows); }
@@ -141,16 +141,12 @@ public:
   /** Basic stride/dimension */
   static constexpr const bool isRowMajor = false;
   static constexpr const bool isColMajor = true;
-  static constexpr const bool isRectangular = true;
+  // static constexpr const bool isRectangular = true;
+  static constexpr const bool isSquare = true;
   static constexpr const bool isTriangular = true;
 
   /** Constructor; not interested in number of cols */
-  constexpr StorageImplementation(int r, [[maybe_unused]] int c) noexcept
-      : rows(r) {
-#ifdef DEBUG
-    assert(r == c);
-#endif
-  }
+  constexpr StorageImplementation(int r) noexcept : rows(r) {}
 
   /** @brief Compute number of elements stored */
   constexpr std::size_t num_elements() const noexcept {
@@ -158,7 +154,7 @@ public:
   }
 
   /** (Re-) set dimensions */
-  void __set_dimensions(int _rows, [[maybe_unused]] int _cols) noexcept {
+  void __set_dimensions(int _rows) noexcept {
     rows = _rows;
 #ifdef DEBUG
     assert(_rows == _cols);
@@ -227,7 +223,8 @@ public:
   /** Basic stride/dimension */
   static constexpr const bool isRowMajor = true;
   static constexpr const bool isColMajor = false;
-  static constexpr const bool isRectangular = false;
+  // static constexpr const bool isRectangular = false;
+  static constexpr const bool isSquare = false;
   static constexpr const bool isTriangular = true;
 
   /** Constructor given number of rows and num of columns */
@@ -324,7 +321,8 @@ public:
   /** Basic stride/dimension */
   static constexpr const bool isRowMajor = true;
   static constexpr const bool isColMajor = false;
-  static constexpr const bool isRectangular = false;
+  // static constexpr const bool isRectangular = false;
+  static constexpr const bool isSquare = false;
   static constexpr const bool isTriangular = false;
 
   /** Constructor given number of rows and number of columns */
@@ -397,7 +395,8 @@ public:
   /** Basic stride/dimension */
   static constexpr const bool isRowMajor = false;
   static constexpr const bool isColMajor = true;
-  static constexpr const bool isRectangular = false;
+  // static constexpr const bool isRectangular = false;
+  static constexpr const bool isSquare = false;
   static constexpr const bool isTriangular = false;
 
   /** Constructor given number of rows and number of columns */

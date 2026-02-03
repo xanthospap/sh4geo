@@ -54,8 +54,10 @@ namespace dso {
  */
 template <MatrixStorageType S> class CoeffMatrix2D {
 private:
-  StorageImplementation<S> m_storage; /** storage type; dictates indexing */
-  double *m_data{nullptr};            /** the actual data */
+  using Storage = StorageImplementation<S>;
+
+  Storage m_storage;        /** storage type; dictates indexing */
+  double *m_data{nullptr};  /** the actual data */
   std::size_t _capacity{0}; /** number of doubles in allocated memory arena */
   static constexpr const int hasContiguousMem = true;
 
@@ -126,11 +128,19 @@ private:
     int reduced_rows;           /* reduced rows */
     int reduced_cols;           /* reduced cols */
     friend class CoeffMatrix2D; /* allow CoeffMatrix2D to make views */
+
     _ReducedViewProxy(Expr e, int r, int c)
         : expr(std::move(e)), reduced_rows(r), reduced_cols(c) {
       if (!((expr.rows() >= reduced_rows) && (expr.cols() >= reduced_cols))) {
         throw std::runtime_error("[ERROR] Failed to construct  "
                                  "_ReducedViewProxy of given dimensions!\n");
+      }
+      /* Square matrices must have rows == cols */
+      if constexpr (Storage::isSquare) {
+        if (expr.rows() != expr.cols()) {
+          throw std::runtime_error("[ERROR] Cannot apply a non-square "
+                                   "reduced_vew to a square Matrix!\n");
+        }
       }
     }
 
@@ -367,11 +377,33 @@ public:
   /** Constructor using number of rows and columns; for some
    * MatrixStorageType's, the number of columns may not be needed.
    */
-  CoeffMatrix2D(int rows, int cols) noexcept
+#if __cplusplus >= 202002L /* concepts only available in C++20 */
+  CoeffMatrix2D(int rows, int cols)
+    requires(!Storage::isSquare)
+#else
+  template <bool B = Storage::isSquare, std::enable_if_t<!B, int> = 0>
+  CoeffMatrix2D(int rows, int cols)
+#endif
       : m_storage(rows, cols),
         m_data((m_storage.num_elements() > 0)
                    ? (new double[m_storage.num_elements()])
                    : (nullptr)),
+        _capacity(m_storage.num_elements()) {
+#ifdef DEBUG
+    assert(m_storage.num_elements() >= 0);
+#endif
+  };
+
+#if __cplusplus >= 202002L /* concepts only available in C++20 */
+  CoeffMatrix2D(int rows)
+    requires(Storage::isSquare)
+#else
+  template <bool B = Storage::isSquare, std::enable_if_t<B, int> = 0>
+  CoeffMatrix2D(int rows, int cols)
+#endif
+      : m_storage(rows), m_data((m_storage.num_elements() > 0)
+                                    ? (new double[m_storage.num_elements()])
+                                    : (nullptr)),
         _capacity(m_storage.num_elements()) {
 #ifdef DEBUG
     assert(m_storage.num_elements() >= 0);
@@ -396,7 +428,10 @@ public:
   CoeffMatrix2D(CoeffMatrix2D &&mat) noexcept
       : m_storage(mat.m_storage), m_data(mat.m_data), _capacity(mat._capacity) {
     mat.m_data = nullptr;
-    mat.m_storage.__set_dimensions(0, 0);
+    if constexpr (Storage::isSquare)
+      mat.m_storage.__set_dimensions(0);
+    else
+      mat.m_storage.__set_dimensions(0, 0);
     mat._capacity = 0;
   }
 
@@ -414,8 +449,9 @@ public:
     }
   }
 
+  /* Constructor from a _ScaledProxy lvalue */
   template <typename T1>
-  CoeffMatrix2D(_ScaledProxy<T1> &&fac) noexcept
+  CoeffMatrix2D(const _ScaledProxy<T1> &fac) noexcept
       : m_storage(fac.rows(), fac.cols()),
         m_data(new double[m_storage.num_elements()]),
         _capacity(m_storage.num_elements()) {
@@ -428,6 +464,11 @@ public:
     }
   }
 
+  /* Constructor from a _ScaledProxy rvalue */
+  template <typename T1>
+  CoeffMatrix2D(_ScaledProxy<T1> &&fac) noexcept
+      : CoeffMatrix2D(static_cast<const _ScaledProxy<T1> &>(fac)){};
+
   /** (Copy) Assignment operator */
   CoeffMatrix2D &operator=(const CoeffMatrix2D &mat) noexcept {
     if (this != &mat) {
@@ -439,7 +480,10 @@ public:
         _capacity = mat.num_elements();
       }
       std::memcpy(m_data, mat.m_data, sizeof(double) * mat.num_elements());
-      m_storage.__set_dimensions(mat.rows(), mat.cols());
+      if constexpr (Storage::isSquare)
+        m_storage.__set_dimensions(mat.rows());
+      else
+        m_storage.__set_dimensions(mat.rows(), mat.cols());
     }
     return *this;
   }
@@ -454,7 +498,10 @@ public:
       _capacity = mat._capacity;
 
       mat.m_data = nullptr;
-      mat.m_storage.__set_dimensions(0, 0);
+      if constexpr (Storage::isSquare)
+        mat.m_storage.__set_dimensions(0);
+      else
+        mat.m_storage.__set_dimensions(0, 0);
       mat._capacity = 0;
     }
     return *this;
@@ -471,97 +518,120 @@ public:
    * If you need to resize but also keep the values already stored in the
    * instance, then you should better call the cresize (member) function.
    */
-  void resize(int rows, int cols) {
+#if __cplusplus >= 202002L /* concepts only available in C++20 */
+  void resize(int rows)
+    requires(!Storage::isSquare)
+  {
+#else
+  template <bool B = Storage::isSquare, std::enable_if_t<B, int> = 0>
+  void resize(int rows) {
+#endif
     /* do we need to re-allocate ? */
-    if (StorageImplementation<S>(rows, cols).num_elements() > _capacity) {
+    if (Storage(rows).num_elements() > _capacity) {
       if (m_data)
         delete[] m_data;
-      m_data = new double[StorageImplementation<S>(rows, cols).num_elements()];
-      _capacity = StorageImplementation<S>(rows, cols).num_elements();
-    } else {
-      ;
+      m_data = new double[Storage(rows).num_elements()];
+      _capacity = Storage(rows).num_elements();
     }
+    m_storage = Storage(rows);
+  }
+
+#if __cplusplus >= 202002L /* concepts only available in C++20 */
+  void resize(int rows, int cols)
+    requires(!Storage::isSquare)
+  {
+#else
+  template <bool B = Storage::isSquare, std::enable_if_t<!B, int> = 0>
+  void resize(int rows, int cols) {
+#endif
+      /* do we need to re-allocate ? */
+      if (Storage(rows, cols).num_elements() > _capacity) {
+        if (m_data) delete[] m_data;
+  m_data = new double[Storage(rows, cols).num_elements()];
+  _capacity = Storage(rows, cols).num_elements();
+} m_storage = Storage(rows, cols);
+} // namespace dso
+
+/** @brief Copy and resize (keeping the MatrixStorageType the same)
+ *
+ * Note that calling this function will not incurr data loss (compare with
+ * the resize function), since we are resizing (re-allocating) AND copying
+ * the data already stored within the data structure.
+ *
+ * Examples:
+ * A =  +1.00  +2.00  +3.00  +4.00
+ *      +5.00  +6.00  +7.00  +8.00
+ *      +9.00 +10.00 +11.00 +12.00
+ *     +13.00 +14.00 +15.00 +16.00
+ *     +17.00 +18.00 +19.00 +20.00
+ *
+ *  A.cresize(10,5) =
+ *      +1.00  +2.00  +3.00  +4.00  +0.00
+ *      +5.00  +6.00  +7.00  +8.00  +0.00
+ *      +9.00 +10.00 +11.00 +12.00  +0.00
+ *     +13.00 +14.00 +15.00 +16.00  +0.00
+ *     +17.00 +18.00 +19.00 +20.00  +0.00
+ *      +0.00  +0.00  +0.00  +0.00  +0.00
+ *      +0.00  +0.00  +0.00  +0.00  +0.00
+ *      +0.00  +0.00  +0.00  +0.00  +0.00
+ *      +0.00  +0.00  +0.00  +0.00  +0.00
+ *      +0.00  +0.00  +0.00  +0.00  +0.00
+ *
+ * A.cresize(3,4) =
+ *      +1.00  +2.00  +3.00  +4.00
+ *      +5.00  +6.00  +7.00  +8.00
+ *      +9.00 +10.00 +11.00 +12.00
+ *
+ * A.cresize(2,2) =
+ *      +1.00  +2.00
+ *      +5.00  +6.00
+ *
+ * Note that there is no garantee that the excess elements will be zero;
+ * they can (and sometimes will) hold random values.
+ */
+void cresize(int rows, int cols) {
+  if (rows != this->rows() || cols != this->cols()) {
+    double *ptr =
+        new double[StorageImplementation<S>(rows, cols).num_elements()];
+    if (m_data) {
+      auto pstorage = StorageImplementation<S>(rows, cols);
+      int num_doubles_src;
+      int num_doubles_trg;
+      /* copy data (from m_data to ptr) */
+      for (int s = 0;
+           s < std::min(pstorage.num_slices(), m_storage.num_slices()); s++) {
+        const double *__restrict__ psrc = this->slice(s, num_doubles_src);
+        double *__restrict__ ptrg = ptr + pstorage.slice(s, num_doubles_trg);
+        std::memcpy(ptrg, psrc,
+                    sizeof(double) *
+                        std::min(num_doubles_src, num_doubles_trg));
+      }
+      delete[] m_data;
+    }
+    _capacity = StorageImplementation<S>(rows, cols).num_elements();
+    m_data = ptr;
     m_storage = StorageImplementation<S>(rows, cols);
   }
+  /* no-op if size given is the same as the one we have */
+}
 
-  /** @brief Copy and resize (keeping the MatrixStorageType the same)
-   *
-   * Note that calling this function will not incurr data loss (compare with
-   * the resize function), since we are resizing (re-allocating) AND copying
-   * the data already stored within the data structure.
-   *
-   * Examples:
-   * A =  +1.00  +2.00  +3.00  +4.00
-   *      +5.00  +6.00  +7.00  +8.00
-   *      +9.00 +10.00 +11.00 +12.00
-   *     +13.00 +14.00 +15.00 +16.00
-   *     +17.00 +18.00 +19.00 +20.00
-   *
-   *  A.cresize(10,5) =
-   *      +1.00  +2.00  +3.00  +4.00  +0.00
-   *      +5.00  +6.00  +7.00  +8.00  +0.00
-   *      +9.00 +10.00 +11.00 +12.00  +0.00
-   *     +13.00 +14.00 +15.00 +16.00  +0.00
-   *     +17.00 +18.00 +19.00 +20.00  +0.00
-   *      +0.00  +0.00  +0.00  +0.00  +0.00
-   *      +0.00  +0.00  +0.00  +0.00  +0.00
-   *      +0.00  +0.00  +0.00  +0.00  +0.00
-   *      +0.00  +0.00  +0.00  +0.00  +0.00
-   *      +0.00  +0.00  +0.00  +0.00  +0.00
-   *
-   * A.cresize(3,4) =
-   *      +1.00  +2.00  +3.00  +4.00
-   *      +5.00  +6.00  +7.00  +8.00
-   *      +9.00 +10.00 +11.00 +12.00
-   *
-   * A.cresize(2,2) =
-   *      +1.00  +2.00
-   *      +5.00  +6.00
-   *
-   * Note that there is no garantee that the excess elements will be zero;
-   * they can (and sometimes will) hold random values.
-   */
-  void cresize(int rows, int cols) {
-    if (rows != this->rows() || cols != this->cols()) {
-      double *ptr =
-          new double[StorageImplementation<S>(rows, cols).num_elements()];
-      if (m_data) {
-        auto pstorage = StorageImplementation<S>(rows, cols);
-        int num_doubles_src;
-        int num_doubles_trg;
-        /* copy data (from m_data to ptr) */
-        for (int s = 0;
-             s < std::min(pstorage.num_slices(), m_storage.num_slices()); s++) {
-          const double *__restrict__ psrc = this->slice(s, num_doubles_src);
-          double *__restrict__ ptrg = ptr + pstorage.slice(s, num_doubles_trg);
-          std::memcpy(ptrg, psrc,
-                      sizeof(double) *
-                          std::min(num_doubles_src, num_doubles_trg));
-        }
-        delete[] m_data;
-      }
-      _capacity = StorageImplementation<S>(rows, cols).num_elements();
-      m_data = ptr;
-      m_storage = StorageImplementation<S>(rows, cols);
+template <typename T, std::enable_if_t<_is_expr_v<T>, int> = 0>
+CoeffMatrix2D &operator+=(const T &rhs) {
+  if constexpr (T::hasContiguousMem) {
+    if (!((this->rows() == rhs.rows()) && (this->cols() == rhs.cols()))) {
+      throw std::runtime_error("[ERROR] Invalid matrix dimensions for "
+                               "CoeffMatrix2D::operator+=\n");
     }
-    /* no-op if size given is the same as the one we have */
-  }
-
-  template <typename T, std::enable_if_t<_is_expr_v<T>, int> = 0> CoeffMatrix2D &operator+=(const T &rhs) {
-    if constexpr (T::hasContiguousMem) {
-      if (!((this->rows() == rhs.rows()) && (this->cols() == rhs.cols()))) {
-        throw std::runtime_error("[ERROR] Invalid matrix dimensions for CoeffMatrix2D::operator+=\n");
-      }
-      for (std::size_t i = 0; i < m_storage.num_elements(); i++) {
-        m_data[i] += rhs.data(i);
-      }
-    } else {
-      reduce_copy<ReductionAssignmentOperator::EqAdd>(rhs);
+    for (std::size_t i = 0; i < m_storage.num_elements(); i++) {
+      m_data[i] += rhs.data(i);
     }
-    return *this;
+  } else {
+    reduce_copy<ReductionAssignmentOperator::EqAdd>(rhs);
   }
-
-}; /* class CoeffMatrix2D */
+  return *this;
+}
+}
+; /* class CoeffMatrix2D */
 
 template <MatrixStorageType S>
 inline void swap(CoeffMatrix2D<S> &a, CoeffMatrix2D<S> &b) noexcept {
