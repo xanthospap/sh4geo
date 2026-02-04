@@ -44,13 +44,13 @@ private:
   double _Re;
   /* coefficients are normaliized (?) */
   bool _cnormalized;
-  /* maximum degree */
+  /* maximum degree; should be same as _Cnm.rows() and _Snm.rows() */
   int m_degree;
-  /* maximum order */
+  /* maximum order; can differ from _Cnm.rows() and _Snm.rows() if m_order < m_degree */
   int m_order;
-  /* Cnm coefficients */
+  /* Cnm coefficients (square matrix of size dim=(m_degree+1)x(m_degree+1)) */
   CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> _Cnm;
-  /* Snm coefficients */
+  /* Snm coefficients (square matrix of size dim=(m_degree+1)x(m_degree+1)) */
   CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> _Snm;
 
   /** Get the underlying data of the C coefficient matrix for given index.
@@ -129,13 +129,13 @@ public:
   /** Default constructor */
   StokesCoeffs() noexcept
       : _GM(::iers2010::GMe), _Re(::iers2010::Re), _cnormalized(true),
-        m_degree(0), m_order(0), _Cnm{0, 0}, _Snm{0, 0} {}
+        m_degree(0), m_order(0), _Cnm(0), _Snm(0) {}
 
   /** Constructor given degree, order, GM and radius R */
   StokesCoeffs(int n, int m = -1, double GM = ::iers2010::GMe,
                double Re = ::iers2010::Re)
       : _GM(GM), _Re(Re), _cnormalized(true), m_degree(n),
-        m_order((m > 0) ? m : n), _Cnm(n + 1, n + 1), _Snm(n + 1, n + 1) {}
+        m_order((m > 0) ? m : n), _Cnm(n + 1), _Snm(n + 1) {}
 
   /* @brief Resize to new degree/order, deleting currrent data.
    *
