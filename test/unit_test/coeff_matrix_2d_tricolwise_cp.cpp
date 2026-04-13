@@ -17,7 +17,7 @@ using namespace dso;
  */
 
 int main() {
-  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> mat1(4, 4);
+  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> mat1(4);
   assert(mat1.num_elements() == 10);
   assert(mat1.rows() == 4);
   assert(mat1.cols() == 4);
@@ -35,7 +35,7 @@ int main() {
 
   {
     auto mat2(mat1);
-    mat2.cresize(2, 2);
+    mat2.cresize(2);
     assert(mat2(0, 0) == 1);
     assert(mat2(1, 0) == 5);
     assert(mat2(1, 1) == 6);
@@ -50,7 +50,7 @@ int main() {
 
   {
     auto mat2(mat1);
-    mat2.cresize(8, 8);
+    mat2.cresize(8);
     assert(mat2(0, 0) == 1);
     assert(mat2(1, 0) == 5);
     assert(mat2(2, 0) == 9);
@@ -81,7 +81,7 @@ int main() {
 
   {
     auto mat2(mat1);
-    mat2.cresize(1, 1);
+    mat2.cresize(1);
     assert(mat2(0, 0) == 1);
 
     /* get columns */

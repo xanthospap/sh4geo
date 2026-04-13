@@ -17,10 +17,10 @@ using namespace dso;
  */
 
 int main() {
-  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> mat1(4, 4);
-  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> mat2(4, 4);
-  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> mat3(4, 4);
-  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> mat4(4, 4);
+  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> mat1(4);
+  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> mat2(4);
+  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> mat3(4);
+  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> mat4(4);
 
   /* fill in */
   int k = 0;

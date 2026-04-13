@@ -4,17 +4,17 @@
 #endif
 #include <cassert>
 #include <cstdio>
-#include <utility>
 #include <random>
+#include <utility>
 
 using namespace dso;
 constexpr const double lower_bound = -1e3;
 constexpr const double upper_bound = 1e3;
-std::uniform_real_distribution<double> unif(lower_bound,upper_bound);
+std::uniform_real_distribution<double> unif(lower_bound, upper_bound);
 std::default_random_engine re;
 
 auto almost_equal = [](double a, double b) {
-  return std::abs(a-b) < 1e-15 * (1.0 + std::abs(a) + std::abs(b));
+  return std::abs(a - b) < 1e-15 * (1.0 + std::abs(a) + std::abs(b));
 };
 
 /*
@@ -26,55 +26,55 @@ auto almost_equal = [](double a, double b) {
  */
 
 int main() {
-  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> mat1(10, 10);
+  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> mat1(10);
 
   /* fill in */
   for (int i = 0; i < mat1.rows(); i++) {
     for (int j = 0; j < mat1.cols(); j++) {
-      if (i>=j) {
+      if (i >= j) {
         mat1(i, j) = unif(re);
       }
+    }
+  }
+
+  auto expr = 2.0 * mat1.reduced_view(7, 7);
+  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> B(expr);
+
+  assert(B.rows() == 7);
+  assert(B.cols() == 7);
+
+  for (int i = 0; i < B.rows(); i++) {
+    for (int j = 0; j < B.cols(); j++) {
+      if (i >= j) {
+        assert(almost_equal(B(i, j), 2.0 * mat1(i, j)));
       }
     }
+  }
 
-    auto expr = 2.0 * mat1.reduced_view(7,7);
-    CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> B(expr);
+  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> C(
+      2.0 * mat1.reduced_view(7, 7));
+  assert(C.rows() == 7);
+  assert(C.cols() == 7);
 
-    assert(B.rows()==7);
-    assert(B.cols() == 7);
-
-    for (int i = 0; i < B.rows(); i++) {
-      for (int j = 0; j < B.cols(); j++) {
-        if (i>=j) {
-        assert(almost_equal(B(i,j), 2.0 * mat1(i,j)));
-        }
+  for (int i = 0; i < C.rows(); i++) {
+    for (int j = 0; j < C.cols(); j++) {
+      if (i >= j) {
+        assert(almost_equal(C(i, j), 2.0 * mat1(i, j)));
       }
     }
+  }
 
-    CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> C(2.0 * mat1.reduced_view(7,7));
-    assert(C.rows()==7);
-    assert(C.cols() == 7);
+  auto D = expr;
+  assert(D.rows() == 7);
+  assert(D.cols() == 7);
 
-    for (int i = 0; i < C.rows(); i++) {
-      for (int j = 0; j < C.cols(); j++) {
-        if (i>=j) {
-        assert(almost_equal(C(i,j), 2.0 * mat1(i,j)));
-        }
+  for (int i = 0; i < D.rows(); i++) {
+    for (int j = 0; j < D.cols(); j++) {
+      if (i >= j) {
+        assert(almost_equal(D(i, j), 2.0 * mat1(i, j)));
       }
     }
-
-
-    auto D = expr;
-    assert(D.rows()==7);
-    assert(D.cols() == 7);
-
-    for (int i = 0; i < D.rows(); i++) {
-      for (int j = 0; j < D.cols(); j++) {
-        if (i>=j) {
-        assert(almost_equal(D(i,j), 2.0 * mat1(i,j)));
-        }
-      }
-    }
+  }
 
   return 0;
 }

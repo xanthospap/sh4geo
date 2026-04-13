@@ -9,8 +9,8 @@
 using namespace dso;
 
 int main() {
-  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> mat1(5, 5);
-  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> mat2(5, 5);
+  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> mat1(5);
+  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> mat2(5);
 
   /* fill in */
   int k = 0;
@@ -22,7 +22,7 @@ int main() {
   }
 
   CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> mat3 =
-      1e0 * mat1.reduced_view(3, 3) + 2e0 * mat2.reduced_view(3, 3);
+      1e0 * mat1.reduced_view(3) + 2e0 * mat2.reduced_view(3);
   assert(mat3.rows() == 3);
   assert(mat3.cols() == 3);
   for (int i = 0; i < 3; i++) {
@@ -31,7 +31,7 @@ int main() {
     }
   }
 
-  mat3 += 1e0 * mat1.reduced_view(3, 3) + 2e0 * mat2.reduced_view(3, 3);
+  mat3 += 1e0 * mat1.reduced_view(3) + 2e0 * mat2.reduced_view(3);
   assert(mat3.rows() == 3);
   assert(mat3.cols() == 3);
   for (int i = 0; i < 3; i++) {

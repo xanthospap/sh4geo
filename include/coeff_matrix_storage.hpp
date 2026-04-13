@@ -141,7 +141,6 @@ public:
   /** Basic stride/dimension */
   static constexpr const bool isRowMajor = false;
   static constexpr const bool isColMajor = true;
-  // static constexpr const bool isRectangular = true;
   static constexpr const bool isSquare = true;
   static constexpr const bool isTriangular = true;
 
@@ -395,7 +394,6 @@ public:
   /** Basic stride/dimension */
   static constexpr const bool isRowMajor = false;
   static constexpr const bool isColMajor = true;
-  // static constexpr const bool isRectangular = false;
   static constexpr const bool isSquare = false;
   static constexpr const bool isTriangular = false;
 

@@ -17,7 +17,7 @@ using namespace dso;
  */
 
 int main() {
-  CoeffMatrix2D<MatrixStorageType::LwTriangularRowWise> mat1(4, 4);
+  CoeffMatrix2D<MatrixStorageType::LwTriangularRowWise> mat1(4);
   assert(mat1.num_elements() == 10);
   assert(mat1.rows() == 4);
   assert(mat1.cols() == 4);
