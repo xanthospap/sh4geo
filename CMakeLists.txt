@@ -94,9 +94,17 @@ if(ENABLE_BENCHMARKS)
     bench/bench_axpy_lwtricolwise.cpp
   )
 
-  target_link_libraries(bench_axpy_lwtricolwise
-    PRIVATE
-      stokes_coeffs
-      benchmark::benchmark
+  add_executable(bench_axpy2_lwtricolwise
+    bench/bench_axpy2_lwtricolwise.cpp
   )
+
+  foreach(bench_target
+      bench_axpy_lwtricolwise
+      bench_axpy2_lwtricolwise)
+    target_link_libraries(${bench_target}
+      PRIVATE
+        stokes_coeffs
+        benchmark::benchmark
+    )
+  endforeach()
 endif()

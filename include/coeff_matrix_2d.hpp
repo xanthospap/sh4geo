@@ -74,6 +74,7 @@ inline void axpy_scalar(double *DSO_RESTRICT a, const double *DSO_RESTRICT b,
     a[i] += s * b[i];
   }
 }
+
 /* axpy when a and b are of same dimensions and are LwTriangularColWise */
 inline void axpy_lwtri_colwise(double *DSO_RESTRICT a,
                                const double *DSO_RESTRICT b, double s,
@@ -179,6 +180,91 @@ inline void axpy_lwtri_colwise(double *DSO_RESTRICT a,
   for (; i < n; ++i) {
     /* Final scalar daxpy update for the leftover elements. */
     a[i] += s * b[i];
+  }
+#endif
+}
+
+inline void axpy2_lwtri_colwise(double *DSO_RESTRICT a,
+                                const double *DSO_RESTRICT b1,
+                                const double *DSO_RESTRICT b2, double s1,
+                                double s2, std::size_t n) noexcept {
+#ifndef DSO_SIMD
+  for (std::size_t i = 0; i < n; ++i) {
+    a[i] += s1 * b1[i] + s2 * b2[i];
+  }
+#else
+  /* Broadcast scalar s1 to all lanes of one AVX register. */
+  const __m256d vs1 = _mm256_set1_pd(s1);
+
+  /* Broadcast scalar s2 to all lanes of one AVX register. */
+  const __m256d vs2 = _mm256_set1_pd(s2);
+
+  /* Flat index over the contiguous storage arrays. */
+  std::size_t i = 0;
+
+  /* Main vector loop, unrolled by 2 AVX vectors = 8 doubles per iteration. */
+  for (; i + 8 <= n; i += 8) {
+    /* Load 4 doubles from A, B1, B2. */
+    __m256d va0 = _mm256_load_pd(a + i);
+    __m256d vb10 = _mm256_load_pd(b1 + i);
+    __m256d vb20 = _mm256_load_pd(b2 + i);
+
+    /* Load next 4 doubles from A, B1, B2. */
+    __m256d va1 = _mm256_load_pd(a + i + 4);
+    __m256d vb11 = _mm256_load_pd(b1 + i + 4);
+    __m256d vb21 = _mm256_load_pd(b2 + i + 4);
+
+#if defined(__FMA__)
+    /* First fused update:
+     *   va = s1 * b1 + va
+     */
+    va0 = _mm256_fmadd_pd(vb10, vs1, va0);
+    va1 = _mm256_fmadd_pd(vb11, vs1, va1);
+
+    /* Second fused update:
+     *   va = s2 * b2 + va
+     *
+     * After the two FMAs, we have:
+     *   va = a + s1*b1 + s2*b2
+     */
+    va0 = _mm256_fmadd_pd(vb20, vs2, va0);
+    va1 = _mm256_fmadd_pd(vb21, vs2, va1);
+#else
+    /* Non-FMA fallback:
+     *   va = va + s1*b1 + s2*b2
+     */
+    va0 = _mm256_add_pd(va0, _mm256_mul_pd(vb10, vs1));
+    va1 = _mm256_add_pd(va1, _mm256_mul_pd(vb11, vs1));
+
+    va0 = _mm256_add_pd(va0, _mm256_mul_pd(vb20, vs2));
+    va1 = _mm256_add_pd(va1, _mm256_mul_pd(vb21, vs2));
+#endif
+
+    /* Store updated values back to A. */
+    _mm256_store_pd(a + i, va0);
+    _mm256_store_pd(a + i + 4, va1);
+  }
+
+  /* Secondary vector loop handling one AVX vector = 4 doubles. */
+  for (; i + 4 <= n; i += 4) {
+    __m256d va = _mm256_load_pd(a + i);
+    __m256d vb1 = _mm256_load_pd(b1 + i);
+    __m256d vb2 = _mm256_load_pd(b2 + i);
+
+#if defined(__FMA__)
+    va = _mm256_fmadd_pd(vb1, vs1, va);
+    va = _mm256_fmadd_pd(vb2, vs2, va);
+#else
+    va = _mm256_add_pd(va, _mm256_mul_pd(vb1, vs1));
+    va = _mm256_add_pd(va, _mm256_mul_pd(vb2, vs2));
+#endif
+
+    _mm256_store_pd(a + i, va);
+  }
+
+  /* Scalar cleanup for the remaining 0..3 elements. */
+  for (; i < n; ++i) {
+    a[i] += s1 * b1[i] + s2 * b2[i];
   }
 #endif
 }
@@ -929,6 +1015,29 @@ operator+=(const _ScaledProxy<const CoeffMatrix2D &> &rhs) noexcept
   detail::axpy_lwtri_colwise(m_data, rhs.expr.m_data, rhs.fac,
                              m_storage.num_elements());
   return *this;
+}
+
+#if __cplusplus >= 202002L
+void axpy2_inplace(double s1, const CoeffMatrix2D &B1, double s2,
+                   const CoeffMatrix2D &B2) noexcept
+  requires(S == MatrixStorageType::LwTriangularColWise)
+#else
+  template <
+      MatrixStorageType SS = S,
+      std::enable_if_t<SS == MatrixStorageType::LwTriangularColWise, int> = 0>
+  void axpy2_inplace(double s1, const CoeffMatrix2D &B1, double s2,
+                     const CoeffMatrix2D &B2) noexcept
+#endif
+{
+#ifdef DEBUG
+  assert(this->rows() == B1.rows());
+  assert(this->cols() == B1.cols());
+  assert(this->rows() == B2.rows());
+  assert(this->cols() == B2.cols());
+#endif
+
+  detail::axpy2_lwtri_colwise(m_data, B1.m_data, B2.m_data, s1, s2,
+                              m_storage.num_elements());
 }
 
 }; /* namespace dso */
