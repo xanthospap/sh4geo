@@ -7,11 +7,38 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Optional: nicer warnings
+# ---- Options ----
+option(DSO_SIMD "Enable SIMD kernels" ON)
+option(ENABLE_SANITIZERS "Enable Address/Undefined sanitizers (Debug only)" OFF)
+option(ENABLE_BENCHMARKS "Build benchmarks" ON)
+
+# ---- Common compile options ----
 if(MSVC)
   add_compile_options(/W4)
 else()
-  add_compile_options(-Wall -Wextra -Wpedantic)
+  add_compile_options(
+    -Wall -Wextra -Werror -pedantic -W -Wshadow
+    $<$<CONFIG:Release>:-O2>
+    $<$<CONFIG:Release>:-march=native>
+    $<$<CONFIG:Debug>:-g>
+    $<$<CONFIG:Debug>:-Wdisabled-optimization>
+    $<$<CONFIG:RelWithDebInfo>:-fno-omit-frame-pointer>
+    $<$<CONFIG:RelWithDebInfo>:-g>
+    $<$<CONFIG:RelWithDebInfo>:-O2>
+    $<$<CONFIG:RelWithDebInfo>:-march=native>
+  )
+endif()
+
+add_compile_definitions($<$<CONFIG:Debug>:DEBUG>)
+
+if(ENABLE_SANITIZERS)
+  add_compile_options(
+    $<$<CONFIG:Debug>:-fsanitize=address,undefined>
+    $<$<CONFIG:Debug>:-fno-omit-frame-pointer>
+  )
+  add_link_options(
+    $<$<CONFIG:Debug>:-fsanitize=address,undefined>
+  )
 endif()
 
 # ---- Library target ----
@@ -24,8 +51,20 @@ target_include_directories(stokes_coeffs
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
+# ---- SIMD flags ----
+if(DSO_SIMD)
+  target_compile_definitions(stokes_coeffs PUBLIC DSO_SIMD)
+
+  # PUBLIC because templates / headers may contain SIMD code
+  if(MSVC)
+    target_compile_options(stokes_coeffs PUBLIC /arch:AVX2)
+  else()
+    target_compile_options(stokes_coeffs PUBLIC -mavx2 -mfma)
+  endif()
+endif()
+
 # ---- Tests ----
-include(CTest)  # defines BUILD_TESTING option and enables testing infra
+include(CTest)
 if(BUILD_TESTING)
   enable_testing()
 
@@ -42,9 +81,22 @@ if(BUILD_TESTING)
 
     add_executable(${test_name} ${test_src})
     target_link_libraries(${test_name} PRIVATE stokes_coeffs)
-    target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
     add_test(NAME ${test_name} COMMAND ${test_name})
   endforeach()
 endif()
 
+# ---- Benchmarks ----
+if(ENABLE_BENCHMARKS)
+  find_package(benchmark REQUIRED)
+
+  add_executable(bench_axpy_lwtricolwise
+    bench/bench_axpy_lwtricolwise.cpp
+  )
+
+  target_link_libraries(bench_axpy_lwtricolwise
+    PRIVATE
+      stokes_coeffs
+      benchmark::benchmark
+  )
+endif()

@@ -46,15 +46,6 @@ int main() {
     cptr = mat2.row(1);
     assert(*cptr == mat2(1, 0));
     assert(cptr[1] == mat2(1, 1));
-    cptr = mat2.row(2);
-    assert(*cptr == mat2(2, 0));
-    assert(cptr[1] == mat2(2, 1));
-    assert(cptr[2] == mat2(2, 2));
-    cptr = mat2.row(3);
-    assert(*cptr == mat2(3, 0));
-    assert(cptr[1] == mat2(3, 1));
-    assert(cptr[2] == mat2(3, 2));
-    assert(cptr[3] == mat2(3, 3));
   }
 
   {

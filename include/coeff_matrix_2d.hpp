@@ -16,8 +16,21 @@
 #include <cassert>
 #include <cstdio>
 #endif
+#include <cstddef>
+#include <cstdint>
+#ifdef DSO_SIMD
+#include <immintrin.h>
+#endif
 
-namespace {
+#if defined(__GNUC__) || defined(__clang__)
+#define DSO_RESTRICT __restrict__
+#elif defined(_MSC_VER)
+#define DSO_RESTRICT __restrict
+#else
+#define DSO_RESTRICT
+#endif
+
+namespace detail {
 inline double &op_equal(double &lhs, double rhs) noexcept { return lhs = rhs; }
 inline double &op_eqadd(double &lhs, double rhs) noexcept { return lhs += rhs; }
 enum class ReductionAssignmentOperator { Equal, EqAdd };
@@ -54,7 +67,122 @@ template <class T>
 static constexpr bool _is_expr_v =
     _is_expr<std::remove_cv_t<std::remove_reference_t<T>>>::value;
 
-} /* anonymous namespace */
+/* axpy when a and b are of same dimensions and contiguous */
+inline void axpy_scalar(double *DSO_RESTRICT a, const double *DSO_RESTRICT b,
+                        double s, std::size_t n) noexcept {
+  for (std::size_t i = 0; i < n; ++i) {
+    a[i] += s * b[i];
+  }
+}
+/* axpy when a and b are of same dimensions and are LwTriangularColWise */
+inline void axpy_lwtri_colwise(double *DSO_RESTRICT a,
+                               const double *DSO_RESTRICT b, double s,
+                               std::size_t n) noexcept {
+#ifndef DSO_SIMD
+  axpy_scalar(a, b, s, n);
+#else
+  /* Broadcast the scalar factor s to all 4 lanes of a 256-bit AVX register.
+   * Each __m256d holds 4 doubles. We will reuse this register in every vector
+   * iteration, so the broadcast is done once up front. */
+  const __m256d vs = _mm256_set1_pd(s);
+
+  /* Flat index over the contiguous storage buffers a[] and b[].
+   * For LwTriangularColWise the full matrix content is stored contiguously,
+   * so this kernel intentionally ignores any 2D indexing and operates only
+   * on raw linear memory. */
+  std::size_t i = 0;
+
+  /* Main vector loop, unrolled by 2 AVX vectors = 8 doubles per iteration.
+   *
+   * Why unroll?
+   * - It reduces loop overhead.
+   * - It gives the compiler / CPU a bit more instruction-level parallelism.
+   * - It often improves throughput on modern x86 cores.
+   *
+   * The loop condition i + 8 <= n ensures that the 8 elements accessed here
+   * are always in-bounds. */
+  for (; i + 8 <= n; i += 8) {
+    /* Load 4 consecutive doubles from a[i .. i+3].
+     * Because we plan to use aligned allocation for matrix buffers, _load_pd
+     * is the intended aligned load here. */
+    __m256d va0 = _mm256_load_pd(a + i);
+
+    /* Load 4 consecutive doubles from b[i .. i+3]. */
+    __m256d vb0 = _mm256_load_pd(b + i);
+
+    /* Load the next 4 doubles from a[i+4 .. i+7]. */
+    __m256d va1 = _mm256_load_pd(a + i + 4);
+
+    /* Load the next 4 doubles from b[i+4 .. i+7]. */
+    __m256d vb1 = _mm256_load_pd(b + i + 4);
+
+#if defined(__FMA__)
+    /* Fused multiply-add:
+     *   va0 = vb0 * vs + va0
+     *   va1 = vb1 * vs + va1
+     *
+     * This computes exactly the desired daxpy-style update:
+     *   a[k] += s * b[k]
+     *
+     * Using FMA can reduce instruction count and can improve both throughput
+     * and numerical behavior slightly because multiplication and addition are
+     * fused into one instruction. */
+    va0 = _mm256_fmadd_pd(vb0, vs, va0);
+    va1 = _mm256_fmadd_pd(vb1, vs, va1);
+#else
+    /* Non-FMA fallback:
+     * First compute the vector product vb*vs, then add it to va.
+     *
+     * This is still fully vectorized AVX2 code, just using separate multiply
+     * and add instructions instead of a fused instruction. */
+    va0 = _mm256_add_pd(va0, _mm256_mul_pd(vb0, vs));
+    va1 = _mm256_add_pd(va1, _mm256_mul_pd(vb1, vs));
+#endif
+
+    /* Store the updated first 4 doubles back into a[i .. i+3]. */
+    _mm256_store_pd(a + i, va0);
+
+    /* Store the updated next 4 doubles back into a[i+4 .. i+7]. */
+    _mm256_store_pd(a + i + 4, va1);
+  }
+
+  /* Secondary vector loop handling one AVX vector = 4 doubles at a time.
+   *
+   * This loop runs after the 8-wide unrolled loop and processes any remaining
+   * full 4-double chunk. The loop condition i + 4 <= n guarantees in-bounds
+   * access for a single vector. */
+  for (; i + 4 <= n; i += 4) {
+    /* Load 4 doubles from a. */
+    __m256d va = _mm256_load_pd(a + i);
+
+    /* Load the matching 4 doubles from b. */
+    __m256d vb = _mm256_load_pd(b + i);
+
+#if defined(__FMA__)
+    /* Vector fused multiply-add for one 4-double chunk. */
+    va = _mm256_fmadd_pd(vb, vs, va);
+#else
+    /* Vector multiply + add fallback for one 4-double chunk. */
+    va = _mm256_add_pd(va, _mm256_mul_pd(vb, vs));
+#endif
+
+    /* Store the updated vector back to a. */
+    _mm256_store_pd(a + i, va);
+  }
+
+  /* Scalar cleanup loop.
+   *
+   * If n is not divisible by 8 or 4, there can be 1, 2, or 3 elements left.
+   * Those are handled here with ordinary scalar arithmetic.
+   *
+   * This keeps the vector loops simple and avoids any masked-tail logic. */
+  for (; i < n; ++i) {
+    /* Final scalar daxpy update for the leftover elements. */
+    a[i] += s * b[i];
+  }
+#endif
+}
+} /* namespace detail */
 
 namespace dso {
 
@@ -69,23 +197,32 @@ private:
   Storage m_storage;        /** storage type; dictates indexing */
   double *m_data{nullptr};  /** the actual data */
   std::size_t _capacity{0}; /** number of doubles in allocated memory arena */
-  static constexpr const int hasContiguousMem = true;
 
-  /* an easy to use way to construct StorageImplementation<S> avoid having to
-  constexpr-branch on number of arguments needed in the constructor (i.e. rows
-  and cols or only one size for Square matrices). This will avoid having to do:
-  if constexpr (Storage::isSquare) ...
-  else ...
-  */
-  static Storage make_storage(int rows, int cols) {
-    if constexpr (Storage::isSquare) {
-#ifdef DEBUG
-      assert(rows == cols);
+  static constexpr const int hasContiguousMem = true;
+  static constexpr std::size_t simd_alignment = 64;
+
+  /*
+   * @param[in] n Number of doubles
+   */
+  static double *allocate_buffer(const std::size_t n) {
+    if (n == 0)
+      return nullptr;
+#ifdef DSO_SIMD
+    return static_cast<double *>(
+        ::operator new[](n * sizeof(double), std::align_val_t{simd_alignment}));
+#else
+    return new double[n];
 #endif
-      return Storage(rows);
-    } else {
-      return Storage(rows, cols);
-    }
+  }
+
+  static void deallocate_buffer(double *ptr) noexcept {
+    if (!ptr)
+      return;
+#ifdef DSO_SIMD
+    ::operator delete[](ptr, std::align_val_t{simd_alignment});
+#else
+    delete[] ptr;
+#endif
   }
 
   /** Access an element from the underlying data; use with care IF needed */
@@ -158,18 +295,39 @@ private:
   static Storage make_storage_impl(int rows, int cols) {
     if constexpr (Storage::isSquare) {
 #if __cplusplus >= 202002L
-      static_assert(c20xSquareConstructible<Storage>,
+      static_assert(detail::c20xSquareConstructible<Storage>,
                     "Square storage must be constructible as Storage(int)");
+#endif
+#ifdef DEBUG
+      assert(rows == cols);
 #endif
       (void)cols;
       return Storage(rows);
     } else {
 #if __cplusplus >= 202002L
-      static_assert(c20xRectConstructible<Storage>,
+      static_assert(detail::c20xRectConstructible<Storage>,
                     "Rect storage must be constructible as Storage(int,int)");
 #endif
       return Storage(rows, cols);
     }
+  }
+
+  /* resize to hold (rows, cols). In this implementation, we do not care, at
+   * all, about any data already existing in allocated space by the instance.
+   * Whatever may already be there, will be lost or worst re-ordered. Do not
+   * count on any pre-existing data stored in this Storage. */
+  void resize_impl(int rows, int cols) noexcept {
+    /* new number of elements (after resize) */
+    const auto nele = make_storage_impl(rows, cols).num_elements();
+    /* do we need to re-allocate ? */
+    if (nele > _capacity) {
+      if (m_data)
+        deallocate_buffer(m_data);
+      m_data = allocate_buffer(nele);
+      _capacity = nele;
+    }
+    /* set correct storage */
+    m_storage = Storage(rows);
   }
 
   void cresize_impl(int rows, int cols) {
@@ -181,7 +339,7 @@ private:
     Storage new_storage = make_storage_impl(rows, cols);
     const auto num_elements = new_storage.num_elements();
 
-    double *ptr = new double[num_elements];
+    double *ptr = allocate_buffer(num_elements);
     if (m_data) {
       int num_doubles_src;
       int num_doubles_trg;
@@ -195,14 +353,14 @@ private:
                     sizeof(double) *
                         std::min(num_doubles_src, num_doubles_trg));
       }
-      delete[] m_data;
+      deallocate_buffer(m_data);
     }
     _capacity = num_elements;
     m_data = ptr;
     m_storage = std::move(new_storage);
   }
 
-  template <ReductionAssignmentOperator Op, typename T>
+  template <detail::ReductionAssignmentOperator Op, typename T>
   void reduce_copy(const T &rhs) {
     /* copy data from rhs to lhs;
      * number of rows = rhs.rows()
@@ -220,7 +378,7 @@ private:
       for (int i = 0; i < cprows; i++) {
         double *entries = slice(i, num_elements);
         for (int j = 0; j < std::min(cpcols, num_elements); j++) {
-          op<Op>(entries[j], rhs(i, j));
+          detail::op<Op>(entries[j], rhs(i, j));
         }
       }
     } else {
@@ -228,7 +386,7 @@ private:
         double *entries = slice(i, num_elements);
         const int k = StorageImplementation<S>::first_row_of_col(i);
         for (int j = k; j < cprows; j++) {
-          op<Op>(entries[j - k], rhs(j, i));
+          detail::op<Op>(entries[j - k], rhs(j, i));
         }
       }
     }
@@ -327,16 +485,9 @@ public:
   /** Swap current instance with another */
   void swap(CoeffMatrix2D<S> &b) noexcept {
     using std::swap;
-    StorageImplementation<S> tmp_s = b.m_storage;
-    std::size_t tmp_c = b._capacity;
-
+    swap(m_storage, b.m_storage);
     swap(m_data, b.m_data);
-    b.m_storage = this->m_storage;
-    b._capacity = this->_capacity;
-    this->m_storage = tmp_s;
-    this->_capacity = tmp_c;
-
-    return;
+    swap(_capacity, b._capacity);
   }
 
   /** get number of rows */
@@ -434,7 +585,7 @@ public:
 
   /** set all elements of the matrix equal to some value */
   void fill_with(double val) noexcept {
-    std::fill(m_data, m_data + _capacity /*m_storage.num_elements()*/, val);
+    std::fill(m_data, m_data + m_storage.num_elements(), val);
   }
 
   /** multiply all elements of matrix with given value */
@@ -450,8 +601,9 @@ public:
   double *data() noexcept { return m_data; }
 
   /* Expression + Expression = _SumProxy */
-  template <class A, class B,
-            std::enable_if_t<_is_expr_v<A> && _is_expr_v<B>, int> = 0>
+  template <
+      class A, class B,
+      std::enable_if_t<detail::_is_expr_v<A> && detail::_is_expr_v<B>, int> = 0>
   friend auto operator+(const A &a, const B &b) noexcept {
     // keep dimension checks in the proxy ctor (preferred).
     return _SumProxy<const A &, const B &>(a, b);
@@ -466,15 +618,27 @@ public:
   friend auto operator+(const X &, CoeffMatrix2D &&) = delete;
 
   /* Expression * scalar = _ScaledProxy */
-  template <class A, std::enable_if_t<_is_expr_v<A>, int> = 0>
-  friend auto operator*(const A &a, double s) noexcept {
-    return _ScaledProxy<const A &>(a, s);
+  template <class A, std::enable_if_t<detail::_is_expr_v<A>, int> = 0>
+  friend auto operator*(A &&a, double s) noexcept {
+    /* if A is an lvalue, just borrow, ExprT -> const A&; if A is an rvalue then
+     * we should own the instance A, ExprT -> A
+     */
+    using ExprT = std::conditional_t<std::is_lvalue_reference_v<A &&>,
+                                     const std::remove_reference_t<A> &,
+                                     std::remove_reference_t<A>>;
+    return _ScaledProxy<ExprT>(std::forward<A>(a), s);
   }
 
   /* scalar * Expression = _ScaledProxy */
-  template <class A, std::enable_if_t<_is_expr_v<A>, int> = 0>
-  friend auto operator*(double s, const A &a) noexcept {
-    return _ScaledProxy<const A &>(a, s);
+  template <class A, std::enable_if_t<detail::_is_expr_v<A>, int> = 0>
+  friend auto operator*(double s, A &&a) noexcept {
+    /* if A is an lvalue, just borrow, ExprT -> const A&; if A is an rvalue then
+     * we should own the instance A, ExprT -> A
+     */
+    using ExprT = std::conditional_t<std::is_lvalue_reference_v<A &&>,
+                                     const std::remove_reference_t<A> &,
+                                     std::remove_reference_t<A>>;
+    return _ScaledProxy<ExprT>(std::forward<A>(a), s);
   }
 
   /* Not allowed: temporary * scalar */
@@ -514,9 +678,9 @@ public:
   template <bool B = Storage::isSquare, std::enable_if_t<!B, int> = 0>
   CoeffMatrix2D(int rows, int cols)
 #endif
-      : m_storage(make_storage(rows, cols)),
+      : m_storage(make_storage_impl(rows, cols)),
         m_data((m_storage.num_elements() > 0)
-                   ? (new double[m_storage.num_elements()])
+                   ? (allocate_buffer(m_storage.num_elements()))
                    : (nullptr)),
         _capacity(m_storage.num_elements()) {
 #ifdef DEBUG
@@ -531,9 +695,10 @@ public:
   template <bool B = Storage::isSquare, std::enable_if_t<B, int> = 0>
   CoeffMatrix2D(int rows, int cols)
 #endif
-      : m_storage(rows), m_data((m_storage.num_elements() > 0)
-                                    ? (new double[m_storage.num_elements()])
-                                    : (nullptr)),
+      : m_storage(rows),
+        m_data((m_storage.num_elements() > 0)
+                   ? (allocate_buffer(m_storage.num_elements()))
+                   : (nullptr)),
         _capacity(m_storage.num_elements()) {
 #ifdef DEBUG
     assert(m_storage.num_elements() >= 0);
@@ -542,14 +707,13 @@ public:
 
   /** Destructor; free memmory */
   ~CoeffMatrix2D() noexcept {
-    if (m_data)
-      delete[] m_data;
+    deallocate_buffer(m_data);
     _capacity = 0;
   }
 
   /** Copy constructor */
   CoeffMatrix2D(const CoeffMatrix2D &mat) noexcept
-      : m_storage(mat.m_storage), m_data(new double[mat.num_elements()]),
+      : m_storage(mat.m_storage), m_data(allocate_buffer(mat.num_elements())),
         _capacity(mat.num_elements()) {
     std::memcpy(m_data, mat.m_data, sizeof(double) * mat.num_elements());
   }
@@ -566,31 +730,45 @@ public:
   }
 
   template <typename L, typename R>
-  CoeffMatrix2D(_SumProxy<L, R> &&sum) noexcept
-      : m_storage(make_storage(sum.rows(), sum.cols())),
-        m_data(new double[m_storage.num_elements()]),
+  CoeffMatrix2D(const _SumProxy<L, R> &sum) noexcept
+      : m_storage(make_storage_impl(sum.rows(), sum.cols())),
+        m_data(allocate_buffer(m_storage.num_elements())),
         _capacity(m_storage.num_elements()) {
     if constexpr (_SumProxy<L, R>::hasContiguousMem) {
       for (std::size_t i = 0; i < m_storage.num_elements(); i++) {
         m_data[i] = sum.data(i);
       }
     } else {
-      reduce_copy<ReductionAssignmentOperator::Equal>(sum);
+      reduce_copy<detail::ReductionAssignmentOperator::Equal>(sum);
+    }
+  }
+
+  template <typename L, typename R>
+  CoeffMatrix2D(_SumProxy<L, R> &&sum) noexcept
+      : m_storage(make_storage_impl(sum.rows(), sum.cols())),
+        m_data(allocate_buffer(m_storage.num_elements())),
+        _capacity(m_storage.num_elements()) {
+    if constexpr (_SumProxy<L, R>::hasContiguousMem) {
+      for (std::size_t i = 0; i < m_storage.num_elements(); i++) {
+        m_data[i] = sum.data(i);
+      }
+    } else {
+      reduce_copy<detail::ReductionAssignmentOperator::Equal>(sum);
     }
   }
 
   /* Constructor from a _ScaledProxy lvalue */
   template <typename T1>
   CoeffMatrix2D(const _ScaledProxy<T1> &fac) noexcept
-      : m_storage(make_storage(fac.rows(), fac.cols())),
-        m_data(new double[m_storage.num_elements()]),
+      : m_storage(make_storage_impl(fac.rows(), fac.cols())),
+        m_data(allocate_buffer(m_storage.num_elements())),
         _capacity(m_storage.num_elements()) {
     if constexpr (_ScaledProxy<T1>::hasContiguousMem) {
       for (std::size_t i = 0; i < m_storage.num_elements(); i++) {
         m_data[i] = fac.data(i);
       }
     } else {
-      reduce_copy<ReductionAssignmentOperator::Equal>(fac);
+      reduce_copy<detail::ReductionAssignmentOperator::Equal>(fac);
     }
   }
 
@@ -605,8 +783,8 @@ public:
       /* do we need extra capacity ? */
       if (_capacity < mat._capacity) {
         if (m_data)
-          delete[] m_data;
-        m_data = new double[mat.num_elements()];
+          deallocate_buffer(m_data);
+        m_data = allocate_buffer(mat.num_elements());
         _capacity = mat.num_elements();
       }
       std::memcpy(m_data, mat.m_data, sizeof(double) * mat.num_elements());
@@ -622,7 +800,7 @@ public:
   CoeffMatrix2D &operator=(CoeffMatrix2D &&mat) noexcept {
     if (this != &mat) {
       if (m_data)
-        delete[] m_data;
+        deallocate_buffer(m_data);
       m_storage = mat.m_storage;
       m_data = mat.m_data;
       _capacity = mat._capacity;
@@ -656,14 +834,7 @@ public:
   template <bool B = Storage::isSquare, std::enable_if_t<B, int> = 0>
   void resize(int rows) {
 #endif
-    /* do we need to re-allocate ? */
-    if (Storage(rows).num_elements() > _capacity) {
-      if (m_data)
-        delete[] m_data;
-      m_data = new double[Storage(rows).num_elements()];
-      _capacity = Storage(rows).num_elements();
-    }
-    m_storage = Storage(rows);
+    return resize_impl(rows, rows);
   }
 
 #if __cplusplus >= 202002L /* concepts only available in C++20 */
@@ -674,14 +845,7 @@ public:
   template <bool B = Storage::isSquare, std::enable_if_t<!B, int> = 0>
   void resize(int rows, int cols) {
 #endif
-    /* do we need to re-allocate ? */
-    if (Storage(rows, cols).num_elements() > _capacity) {
-      if (m_data)
-        delete[] m_data;
-      m_data = new double[Storage(rows, cols).num_elements()];
-      _capacity = Storage(rows, cols).num_elements();
-    }
-    m_storage = Storage(rows, cols);
+    return resize_impl(rows, cols);
   }
 
 #if __cplusplus >= 202002L /* concepts only available in C++20 */
@@ -706,7 +870,7 @@ public:
       return cresize_impl(rows, rows);
 }
 
-template <typename T, std::enable_if_t<_is_expr_v<T>, int> = 0>
+template <typename T, std::enable_if_t<detail::_is_expr_v<T>, int> = 0>
 CoeffMatrix2D &operator+=(const T &rhs) {
   if constexpr (T::hasContiguousMem) {
     if (!((this->rows() == rhs.rows()) && (this->cols() == rhs.cols()))) {
@@ -717,10 +881,56 @@ CoeffMatrix2D &operator+=(const T &rhs) {
       m_data[i] += rhs.data(i);
     }
   } else {
-    reduce_copy<ReductionAssignmentOperator::EqAdd>(rhs);
+    reduce_copy<detail::ReductionAssignmentOperator::EqAdd>(rhs);
   }
   return *this;
 }
+
+/* Specific for LwTriangularColWise:
+ * Following are optimizations targeting MatrixStorageType::LwTriangularColWise
+ * leveraging SIMD operations
+ *
+ * axpy: operation of type A = A + s * B where B is LwTriangularColWise and s is
+ *       a scalar
+ */
+#if __cplusplus >= 202002L
+void axpy_inplace(double s, const CoeffMatrix2D &rhs) noexcept
+  requires(S == MatrixStorageType::LwTriangularColWise)
+#else
+  template <
+      MatrixStorageType SS = S,
+      std::enable_if_t<SS == MatrixStorageType::LwTriangularColWise, int> = 0>
+  void axpy_inplace(double s, const CoeffMatrix2D &rhs) noexcept
+#endif
+{
+#ifdef DEBUG
+  assert(this->rows() == rhs.rows());
+  assert(this->cols() == rhs.cols());
+#endif
+  detail::axpy_lwtri_colwise(m_data, rhs.m_data, s, m_storage.num_elements());
+}
+
+#if __cplusplus >= 202002L
+CoeffMatrix2D &
+operator+=(const _ScaledProxy<const CoeffMatrix2D &> &rhs) noexcept
+  requires(S == MatrixStorageType::LwTriangularColWise)
+#else
+  template <
+      MatrixStorageType SS = S,
+      std::enable_if_t<SS == MatrixStorageType::LwTriangularColWise, int> = 0>
+  CoeffMatrix2D &
+  operator+=(const _ScaledProxy<const CoeffMatrix2D &> &rhs) noexcept
+#endif
+{
+#ifdef DEBUG
+  assert(this->rows() == rhs.rows());
+  assert(this->cols() == rhs.cols());
+#endif
+  detail::axpy_lwtri_colwise(m_data, rhs.expr.m_data, rhs.fac,
+                             m_storage.num_elements());
+  return *this;
+}
+
 }; /* namespace dso */
 
 template <MatrixStorageType S>

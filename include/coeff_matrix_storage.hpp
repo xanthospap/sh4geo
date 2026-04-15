@@ -153,12 +153,7 @@ public:
   }
 
   /** (Re-) set dimensions */
-  void __set_dimensions(int _rows) noexcept {
-    rows = _rows;
-#ifdef DEBUG
-    assert(_rows == _cols);
-#endif
-  }
+  void __set_dimensions(int _rows) noexcept { rows = _rows; }
 
   /** number of rows */
   constexpr int nrows() const noexcept { return rows; }
@@ -222,7 +217,6 @@ public:
   /** Basic stride/dimension */
   static constexpr const bool isRowMajor = true;
   static constexpr const bool isColMajor = false;
-  // static constexpr const bool isRectangular = false;
   static constexpr const bool isSquare = false;
   static constexpr const bool isTriangular = true;
 
@@ -243,15 +237,9 @@ public:
 
   /** @brief Compute number of elements stored */
   constexpr std::size_t num_elements() const noexcept {
-    if (rows == cols) {
-      std::size_t n = rows;
-      return (n * (n + 1)) / 2;
-    } else {
-      std::size_t n = 0;
-      for (int r = 0; r < rows; r++)
-        n += std::min(r + 1, cols);
-      return n;
-    }
+    if (rows <= cols)
+      return rows * (rows + 1) / 2;
+    return cols * (cols + 1) / 2 + (rows - cols) * cols;
   }
 
   /** @brief Number of elements (data points) stored for a given row */
@@ -269,10 +257,9 @@ public:
    * will point to the first (0) element of the third row.
    */
   constexpr int slice(int row) const noexcept {
-    int offset = 0;
-    for (int i = 0; i < row; i++)
-      offset += pts_in_row(i);
-    return offset;
+    if (row < cols)
+      return row * (row + 1) / 2;
+    return cols * (cols + 1) / 2 + (row - cols) * cols;
   }
 
   constexpr int slice(int row, int &num_elements) const noexcept {
