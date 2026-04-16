@@ -493,7 +493,7 @@ private:
       }
       /* Square matrices must have rows == cols */
       if constexpr (Storage::isSquare) {
-        if (expr.rows() != expr.cols()) {
+        if (reduced_rows != reduced_cols) {
           throw std::runtime_error("[ERROR] Cannot apply a non-square "
                                    "reduced_vew to a square Matrix!\n");
         }
@@ -690,9 +690,18 @@ public:
   template <
       class A, class B,
       std::enable_if_t<detail::_is_expr_v<A> && detail::_is_expr_v<B>, int> = 0>
-  friend auto operator+(const A &a, const B &b) noexcept {
+  friend auto operator+(A &&a, B &&b) noexcept {
+    /* if A is an lvalue, just borrow, ExprT -> const A&; if A is an rvalue then
+     * we should own the instance A, ExprT -> A
+     */
+    using ExprTa = std::conditional_t<std::is_lvalue_reference_v<A &&>,
+                                      const std::remove_reference_t<A> &,
+                                      std::remove_reference_t<A>>;
+    using ExprTb = std::conditional_t<std::is_lvalue_reference_v<B &&>,
+                                      const std::remove_reference_t<B> &,
+                                      std::remove_reference_t<B>>;
     // keep dimension checks in the proxy ctor (preferred).
-    return _SumProxy<const A &, const B &>(a, b);
+    return _SumProxy<ExprTa, ExprTb>(std::forward<A>(a), std::forward<B>(b));
   }
 
   /* Not allowed: temporary + Expression */

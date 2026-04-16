@@ -13,7 +13,6 @@
 #include <stdexcept>
 #ifdef DEBUG
 #include <cassert>
-#include <cstdio>
 #endif
 
 namespace dso {
@@ -53,7 +52,6 @@ public:
   /** Basic stride/dimension */
   static constexpr const bool isRowMajor = true;
   static constexpr const bool isColMajor = false;
-  // static constexpr const bool isRectangular = true;
   static constexpr const bool isSquare = true;
   static constexpr const bool isTriangular = true;
 
@@ -111,6 +109,10 @@ public:
    *  row, and third column.
    */
   constexpr int index(int row, int column) const noexcept {
+#ifdef DEBUG
+    assert(row >= 0 && row < rows);
+    assert(column >= 0 && column <= row);
+#endif
     return slice(row) + column;
   }
 
@@ -188,6 +190,10 @@ public:
    *  row, and third column.
    */
   constexpr int index(int row, int col) const noexcept {
+#ifdef DEBUG
+    assert(row >= 0 && row < rows);
+    assert(col >= 0 && col <= row);
+#endif
     return slice(col) + (row - col);
   }
 
@@ -307,7 +313,6 @@ public:
   /** Basic stride/dimension */
   static constexpr const bool isRowMajor = true;
   static constexpr const bool isColMajor = false;
-  // static constexpr const bool isRectangular = false;
   static constexpr const bool isSquare = false;
   static constexpr const bool isTriangular = false;
 
