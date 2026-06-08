@@ -12,9 +12,9 @@
 #include <cassert>
 
 namespace iers2010 {
-  constexpr const double GMe = 1e0;
-  constexpr const double Re = 1e0;
-}
+constexpr const double GMe = 1e0;
+constexpr const double Re = 1e0;
+} // namespace iers2010
 
 namespace dso {
 
@@ -46,30 +46,13 @@ private:
   bool _cnormalized;
   /* maximum degree; should be same as _Cnm.rows() and _Snm.rows() */
   int m_degree;
-  /* maximum order; can differ from _Cnm.rows() and _Snm.rows() if m_order < m_degree */
+  /* maximum order; can differ from _Cnm.rows() and _Snm.rows() if m_order <
+   * m_degree */
   int m_order;
   /* Cnm coefficients (square matrix of size dim=(m_degree+1)x(m_degree+1)) */
   CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> _Cnm;
   /* Snm coefficients (square matrix of size dim=(m_degree+1)x(m_degree+1)) */
   CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> _Snm;
-
-  /** Get the underlying data of the C coefficient matrix for given index.
-   * Use with care! There is not certain way of telling the (n,m) index
-   * of the element requested. This function should only be used if we want
-   * to do smthng with all the elements of C, which is very rare.
-   * This function is mstly used for assistance within the Expression
-   * Templates.
-   */
-  double Cdata(int i) const noexcept { return _Cnm.data()[i]; }
-
-  /** Get the underlying data of the S coefficient matrix for given index.
-   * Use with care! There is not certain way of telling the (n,m) index
-   * of the element requested. This function should only be used if we want
-   * to do smthng with all the elements of S, which is very rare.
-   * This function is mstly used for assistance within the Expression
-   * Templates.
-   */
-  double Sdata(int i) const noexcept { return _Snm.data()[i]; }
 
 public:
   /** Copy constructor */
@@ -135,7 +118,15 @@ public:
   StokesCoeffs(int n, int m = -1, double GM = ::iers2010::GMe,
                double Re = ::iers2010::Re)
       : _GM(GM), _Re(Re), _cnormalized(true), m_degree(n),
-        m_order((m > 0) ? m : n), _Cnm(n + 1), _Snm(n + 1) {}
+        m_order((m >= 0) ? m : n), _Cnm(n + 1), _Snm(n + 1) {
+    _Cnm.fill_with(0);
+    _Snm.fill_with(0);
+#ifdef DEBUG
+    assert(m_degree >= 0);
+    assert(m_order >= 0);
+    assert(m_degree >= m_order);
+#endif
+  }
 
   /* @brief Resize to new degree/order, deleting currrent data.
    *
@@ -191,7 +182,12 @@ public:
   bool &normalized() noexcept { return _cnormalized; }
 
   /** get the J2 term, i.e. -C_nm for n=2 and m=0 */
-  double J2() const noexcept { return -_Cnm(2, 0); };
+  double J2() const noexcept {
+#ifdef DEBUG
+    assert(m_dergee >= 2);
+#endif
+    return -_Cnm(2, 0);
+  };
 
   /** set the Cnm and Snm coefficients to zero */
   void clear() noexcept {
@@ -201,10 +197,8 @@ public:
 
   /** scale the Cnm and Snm coefficients */
   void scale(double factor) noexcept {
-    if (m_degree) {
-      _Cnm.multiply(factor);
-      _Snm.multiply(factor);
-    }
+    _Cnm.multiply(factor);
+    _Snm.multiply(factor);
   }
 
   /** get the Cnm coefficient */
@@ -214,10 +208,20 @@ public:
   double &C(int n, int m) noexcept { return _Cnm(n, m); }
 
   /** get the Snm coefficient */
-  double S(int n, int m) const noexcept { return _Snm(n, m); }
+  double S(int n, int m) const noexcept {
+#ifdef DEBUG
+    assert(m = > 1);
+#endif
+    return _Snm(n, m);
+  }
 
   /** get/set the Snm coefficient */
-  double &S(int n, int m) noexcept { return _Snm(n, m); }
+  double &S(int n, int m) noexcept {
+#ifdef DEBUG
+    assert(m = > 1);
+#endif
+    return _Snm(n, m);
+  }
 
   /** get the Cnm coefficient matrix */
   CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> &Cnm() noexcept {
@@ -287,7 +291,8 @@ public:
       max_order = anm.rows() - 1;
     int max_degree = anm.rows() - 1;
     StokesCoeffs cs(max_degree, max_order);
-    for (int m = 0; m <= max_degree; m++) {
+    // for (int m = 0; m <= max_degree; m++) {
+    for (int m = 0; m <= max_order; m++) {
       for (int l = 0; l < m; l++) {
         cs.S(m, l + 1) = anm(l, m);
         // (1,1) -> (0,1) m = 1
