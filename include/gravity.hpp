@@ -53,6 +53,37 @@ struct NormalizedLegendreFactors {
   NormalizedLegendreFactors() noexcept;
 }; /* struct NormalizedLegendreFactors */
 
+#ifdef PRECOMPUTED_SQRT_SHFACS
+struct CunninghamWeights {
+  static constexpr int MAX_N =
+      NormalizedLegendreFactors::MAX_SIZE_FOR_ALF_FACTORS;
+
+  /* degree-only */
+  std::array<double, MAX_N> acc_scale;
+  std::array<double, MAX_N> grad_scale;
+  std::array<double, MAX_N> d1_m0_wm0;
+  std::array<double, MAX_N> d1_m0_wp1;
+  std::array<double, MAX_N> d2_m0_wm0;
+  std::array<double, MAX_N> d2_m0_wp1;
+  std::array<double, MAX_N> d2_m0_wp2;
+
+  /* first derivatives: gravity + deformation */
+  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> d1_wm1;
+  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> d1_wm0;
+  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> d1_wp1;
+
+  /* second derivatives: gravity gradient */
+  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> d2_wm2;
+  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> d2_wm1;
+  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> d2_wm0;
+  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> d2_wp1;
+  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> d2_wp2;
+
+  CunninghamWeights();
+};
+const CunninghamWeights &cunningham_weights() noexcept;
+#endif
+
 /** Acceleration due to point mass at r_cb on a mass at r.
  *
  * Compute the aceleration induced on a body at the position vector r,
@@ -107,52 +138,6 @@ struct NormalizedLegendreFactors {
 //                         const Eigen::Matrix<double, 3, 1> &rcb, double GMcb,
 //                         Eigen::Matrix<double, 3, 3> &jacobian) noexcept;
 
-/** @brief Compute normalised associated Legendre functions Pnm
- *
- * The algorithm employed here to perform the computations is the
- * "forward recursions" method, see Holmes et al, 2002.
- *
- * @param[in] theta Geocentric latitude for expansion in [rad].
- * @param[in] max_degree Max degree for expansion. i.e. n in Pnm, inclusive
- * @param[in] max_order  Max order for expansion, i.e. m in Pnm, inclusive
- * @param[out] Pnm       Matrix to store the computed Pnm values; must be
- *                       at least large enough to hold Pnm's for
- *                       n=[0,max_degree] and m=[0,max_order].
- * @return Always zero.
- *
- * Holmes, S., Featherstone, W. A unified approach to the Clenshaw summation
- * and the recursive computation of very high degree and order normalised
- * associated Legendre functions. Journal of Geodesy 76, 279–299 (2002).
- * https://doi.org/10.1007/s00190-002-0216-2
- */
-// int normalised_associated_legendre_functions(
-//     double theta, int max_degree, int max_order,
-//     CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> &Pnm) noexcept;
-
-/** @brief Compute normalised associated Legendre functions Pnm and its
- *         first derivative.
- *
- * The algorithm employed here to perform the computations is the
- * "forward recursions" method, see Holmes et al, 2002.
- *
- * @param[in] theta Geocentric latitude for expansion in [rad].
- * @param[in] max_degree Max degree for expansion. i.e. n in Pnm, inclusive
- * @param[in] max_order  Max order for expansion, i.e. m in Pnm, inclusive
- * @param[out] Pnm       Matrix to store the computed Pnm values; must be
- *                       at least large enough to hold Pnm's for
- *                       n=[0,max_degree] and m=[0,max_order].
- * @return Always zero.
- *
- * Holmes, S., Featherstone, W. A unified approach to the Clenshaw summation
- * and the recursive computation of very high degree and order normalised
- * associated Legendre functions. Journal of Geodesy 76, 279–299 (2002).
- * https://doi.org/10.1007/s00190-002-0216-2
- */
-// int normalised_associated_legendre_functions(
-//     double theta, int max_degree, int max_order,
-//     CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> &Pnm,
-//     CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> &dPnm) noexcept;
-
 /** Spherical harmonics of Earth's gravity potential to acceleration and
  *  gradient using the algorithm due to Cunningham. The acceleration and
  *  gradient are computed in Cartesian components, i.e.
@@ -189,7 +174,7 @@ struct NormalizedLegendreFactors {
  * @return        Anything other than zero denotes an error.
  */
 [[nodiscard]]
-int sh2gradient_cunningham(
+int sh2gradient(
     const dso::StokesCoeffs &cs, const Eigen::Matrix<double, 3, 1> &r,
     Eigen::Matrix<double, 3, 1> &acc, Eigen::Matrix<double, 3, 3> &gradient,
     int max_degree = -1, int max_order = -1, double Re = -1, double GM = -1,
@@ -198,7 +183,13 @@ int sh2gradient_cunningham(
     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> *M =
         nullptr) noexcept;
 
-namespace gravity {
+[[nodiscard]]
+int sh2potential(
+    const dso::StokesCoeffs &cs, const Eigen::Matrix<double, 3, 1> &r,
+    double &U, int max_degree, int max_order, double Re, double GM,
+    dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> *W,
+    dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise>
+        *M) noexcept;
 
 /** @brief Compute surface displacement due to a surface load.
  *
@@ -240,15 +231,16 @@ namespace gravity {
  *            have size at least >= max_degree+2
  * @return Anything other than zero denotes an error.
  */
-//[[nodiscard]]
-// int sh_deformation(
-//    const Eigen::Vector3d &point, const dso::StokesCoeffs &cs,
-//    Eigen::Vector3d &dr, Eigen::Vector3d &gravity, double &potential,
-//    int max_degree, int max_order,
-//    dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> &M,
-//    dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise>
-//        &W) noexcept;
+[[nodiscard]]
+int sh2deformation(
+    const dso::StokesCoeffs &cs, const Eigen::Matrix<double, 3, 1> &r,
+    Eigen::Vector3d &dr, Eigen::Vector3d &gravity, double &potential,
+    int max_degree, int max_order, double Re, double GM,
+    dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> *W,
+    dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise>
+        *M) noexcept;
 
+namespace gravity {
 /** @brief  Compute the spherical harmonic basis functions Cnm, Snm.
  *
  * This function computes the spherical harmonic basis functions Cnm, Snm up

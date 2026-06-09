@@ -64,7 +64,11 @@ int sh2gradient_cunningham_impl(
   }
 
   /* precomputed square roots */
+#ifdef PRECOMPUTED_SQRT_SHFACS
+  const auto &Cf = dso::cunningham_weights();
+#else
   static const _PrecomputedSqrts psq;
+#endif
 
 #ifdef DEBUG
   assert(cs.max_degree() >= cs.max_order());
@@ -76,9 +80,7 @@ int sh2gradient_cunningham_impl(
   assert(M.cols() >= max_degree + 3);
 #endif
 
-  /* For the computations, we will need to use a larger degree (due to
-   * gradient)
-   */
+  /* effective degree and order */
   const int degree = max_degree;
   const int order = max_order;
 
@@ -91,8 +93,10 @@ int sh2gradient_cunningham_impl(
     return 2;
   }
 
+#ifndef PRECOMPUTED_SQRT_SHFACS
   /* 2^{1/2} */
   const double sqrt2 = std::sqrt(2e0);
+#endif
 
   /* accumulated sums for acceleration and gradient components */
   double ax_sum = 0.0, ay_sum = 0.0, az_sum = 0.0;
@@ -122,19 +126,38 @@ int sh2gradient_cunningham_impl(
     const int row_idx = degree - m;
     const double *__restrict__ csCnm = cs.Cnm().column(m) + row_idx;
     const double *__restrict__ csSnm = cs.Snm().column(m) + row_idx;
-    auto fsqrt3 = psq.sqnp3.begin() + degree; /* square root factors */
-    auto fsqrt5 = psq.sqnp5.begin() + degree;
+#ifdef PRECOMPUTED_SQRT_SHFACS
+    const double *__restrict__ d1wm1 = Cf.d1_wm1.column(m) + row_idx;
+    const double *__restrict__ d1wm0 = Cf.d1_wm0.column(m) + row_idx;
+    const double *__restrict__ d1wp1 = Cf.d1_wp1.column(m) + row_idx;
+    const double *__restrict__ d2wm2 = Cf.d2_wm2.column(m) + row_idx;
+    const double *__restrict__ d2wm1 = Cf.d2_wm1.column(m) + row_idx;
+    const double *__restrict__ d2wm0 = Cf.d2_wm0.column(m) + row_idx;
+    const double *__restrict__ d2wp1 = Cf.d2_wp1.column(m) + row_idx;
+    const double *__restrict__ d2wp2 = Cf.d2_wp2.column(m) + row_idx;
+    auto fsqrt3 = Cf.acc_scale.cbegin() + degree; /* square root factors */
+    auto fsqrt5 = Cf.grad_scale.cbegin() + degree;
+#else
+    auto fsqrt3 = psq.sqnp3.cbegin() + degree; /* square root factors */
+    auto fsqrt5 = psq.sqnp5.cbegin() + degree;
+#endif
     for (int n = degree; n >= m; --n) {
       const double cnm = *csCnm;
       const double snm = *csSnm;
+      /* acceleration */
       {
-        /* acceleration */
+#ifndef PRECOMPUTED_SQRT_SHFACS
         const double wm1 =
             std::sqrt(static_cast<double>(n - m + 1) * (n - m + 2));
         const double wm0 =
             std::sqrt(static_cast<double>(n - m + 1) * (n + m + 1));
         const double wp1 =
             std::sqrt(static_cast<double>(n + m + 1) * (n + m + 2));
+#else
+        const double wm1 = (*d1wm1--);
+        const double wm0 = (*d1wm0--);
+        const double wp1 = (*d1wp1--);
+#endif
 
         int k = n + 2 - m;
         const double Cm1 = wm1 * Mmm1[k];
@@ -153,8 +176,9 @@ int sh2gradient_cunningham_impl(
         ay_sum += scale_a * ay;
         az_sum += scale_a * az;
       }
+      /* gradient */
       {
-        /* gradient */
+#ifndef PRECOMPUTED_SQRT_SHFACS
         const double wm2 = std::sqrt(static_cast<double>(n - m + 1) *
                                      (n - m + 2) * (n - m + 3) * (n - m + 4)) *
                            ((m == 2) ? std::sqrt(2.0) : 1.0);
@@ -166,6 +190,13 @@ int sh2gradient_cunningham_impl(
                                      (n + m + 1) * (n + m + 2) * (n + m + 3));
         const double wp2 = std::sqrt(static_cast<double>(n + m + 1) *
                                      (n + m + 2) * (n + m + 3) * (n + m + 4));
+#else
+        const double wm2 = (*d2wm2--);
+        const double wm1 = (*d2wm1--);
+        const double wm0 = (*d2wm0--);
+        const double wp1 = (*d2wp1--);
+        const double wp2 = (*d2wp2--);
+#endif
 
         const double Cm2 = wm2 * Mmm2[n + 4 - m];
         const double Sm2 = wm2 * Wmm2[n + 4 - m];
@@ -225,8 +256,20 @@ int sh2gradient_cunningham_impl(
     const int row_idx1 = degree - m;
     const double *__restrict__ csCnm = cs.Cnm().column(m) + row_idx1;
     const double *__restrict__ csSnm = cs.Snm().column(m) + row_idx1;
-    auto fsqrt3 = psq.sqnp3.begin() + degree; /* square root factors */
-    auto fsqrt5 = psq.sqnp5.begin() + degree;
+#ifdef PRECOMPUTED_SQRT_SHFACS
+    const double *__restrict__ d1wm1 = Cf.d1_wm1.column(m) + row_idx1;
+    const double *__restrict__ d1wm0 = Cf.d1_wm0.column(m) + row_idx1;
+    const double *__restrict__ d1wp1 = Cf.d1_wp1.column(m) + row_idx1;
+    const double *__restrict__ d2wm1 = Cf.d2_wm1.column(m) + row_idx1;
+    const double *__restrict__ d2wm0 = Cf.d2_wm0.column(m) + row_idx1;
+    const double *__restrict__ d2wp1 = Cf.d2_wp1.column(m) + row_idx1;
+    const double *__restrict__ d2wp2 = Cf.d2_wp2.column(m) + row_idx1;
+    auto fsqrt3 = Cf.acc_scale.cbegin() + degree; /* square root factors */
+    auto fsqrt5 = Cf.grad_scale.cbegin() + degree;
+#else
+    auto fsqrt3 = psq.sqnp3.cbegin() + degree; /* square root factors */
+    auto fsqrt5 = psq.sqnp5.cbegin() + degree;
+#endif
     for (int n = degree; n >= 1; --n) {
       const double cnm = *csCnm;
       const double snm = *csSnm;
@@ -235,12 +278,19 @@ int sh2gradient_cunningham_impl(
          * only difference with the generalized formula (aka for random n,m)
          * is in wm1
          */
+
+#ifndef PRECOMPUTED_SQRT_SHFACS
         const double wm1 =
             std::sqrt(static_cast<double>(n - m + 1) * (n - m + 2)) * sqrt2;
         const double wm0 =
             std::sqrt(static_cast<double>(n - m + 1) * (n + m + 1));
         const double wp1 =
             std::sqrt(static_cast<double>(n + m + 1) * (n + m + 2));
+#else
+        const double wm1 = (*d1wm1--);
+        const double wm0 = (*d1wm0--);
+        const double wp1 = (*d1wp1--);
+#endif
 
         const double Cm1 = wm1 * Mmm1[n + 2 - m];
         const double Sm1 = wm1 * Wmm1[n + 2 - m];
@@ -258,8 +308,9 @@ int sh2gradient_cunningham_impl(
         ay_sum += scale_a * ay;
         az_sum += scale_a * az;
       }
+      /* gradient */
       {
-        /* gradient */
+#ifndef PRECOMPUTED_SQRT_SHFACS
         const double wm1 = std::sqrt(static_cast<double>(n - m + 1) *
                                      (n - m + 2) * (n - m + 3) * (n + m + 1)) *
                            sqrt2;
@@ -269,6 +320,12 @@ int sh2gradient_cunningham_impl(
                                      (n + m + 1) * (n + m + 2) * (n + m + 3));
         const double wp2 = std::sqrt(static_cast<double>(n + m + 1) *
                                      (n + m + 2) * (n + m + 3) * (n + m + 4));
+#else
+        const double wm1 = (*d2wm1--);
+        const double wm0 = (*d2wm0--);
+        const double wp1 = (*d2wp1--);
+        const double wp2 = (*d2wp2--);
+#endif
 
         const double Cm1 = wm1 * Mmm1[n + 3 - m];
         const double Sm1 = wm1 * Wmm1[n + 3 - m];
@@ -313,14 +370,29 @@ int sh2gradient_cunningham_impl(
   Wmp2 = W.column(2); // W(m+2,m+2)
   const int row_idx0 = degree - m;
   const double *__restrict__ csCnm = cs.Cnm().column(m) + row_idx0;
-  auto fsqrt3 = psq.sqnp3.begin() + degree; /* square root factors */
-  auto fsqrt5 = psq.sqnp5.begin() + degree;
+#ifdef PRECOMPUTED_SQRT_SHFACS
+  auto d1wm0 = Cf.d1_m0_wm0.cbegin() + row_idx0;
+  auto d1wp1 = Cf.d1_m0_wp1.cbegin() + row_idx0;
+  auto d2wm0 = Cf.d2_m0_wm0.cbegin() + row_idx0;
+  auto d2wp1 = Cf.d2_m0_wp1.cbegin() + row_idx0;
+  auto d2wp2 = Cf.d2_m0_wp2.cbegin() + row_idx0;
+  auto fsqrt3 = Cf.acc_scale.cbegin() + degree; /* square root factors */
+  auto fsqrt5 = Cf.grad_scale.cbegin() + degree;
+#else
+  auto fsqrt3 = psq.sqnp3.cbegin() + degree; /* square root factors */
+  auto fsqrt5 = psq.sqnp5.cbegin() + degree;
+#endif
   for (int n = degree; n >= 0; --n) {
     const double cnm = *csCnm;
     {
       /* acceleration */
+#ifndef PRECOMPUTED_SQRT_SHFACS
       double wm0 = std::sqrt(static_cast<double>(n + 1) * (n + 1));
       double wp1 = std::sqrt(static_cast<double>(n + 1) * (n + 2)) / sqrt2;
+#else
+      const double wm0 = (*d1wm0--);
+      const double wp1 = (*d1wp1--);
+#endif
 
       double Cm0 = wm0 * Mmm0[n + 1];
       double Cp1 = wp1 * Mmp1[n];
@@ -335,8 +407,9 @@ int sh2gradient_cunningham_impl(
       ay_sum += scale_a * ay;
       az_sum += scale_a * az;
     }
+    /* gradient */
     {
-      /* gradient */
+#ifndef PRECOMPUTED_SQRT_SHFACS
       const double wm0 =
           std::sqrt(static_cast<double>(n + 1) * (n + 2) * (n + 1) * (n + 2));
       const double wp1 =
@@ -345,6 +418,11 @@ int sh2gradient_cunningham_impl(
       const double wp2 =
           std::sqrt(static_cast<double>(n + 1) * (n + 2) * (n + 3) * (n + 4)) /
           sqrt2;
+#else
+      const double wm0 = (*d2wm0--);
+      const double wp1 = (*d2wp1--);
+      const double wp2 = (*d2wp2--);
+#endif
 
       const double Cm0 = wm0 * Mmm0[n + 2];
       const double Cp1 = wp1 * Mmp1[n + 1];
@@ -384,7 +462,7 @@ int sh2gradient_cunningham_impl(
 }
 } /* unnamed namespace */
 
-int dso::sh2gradient_cunningham(
+int dso::sh2gradient(
     const dso::StokesCoeffs &cs, const Eigen::Matrix<double, 3, 1> &r,
     Eigen::Matrix<double, 3, 1> &acc, Eigen::Matrix<double, 3, 3> &gradient,
     int max_degree, int max_order, double Re, double GM,

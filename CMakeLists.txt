@@ -4,6 +4,7 @@ project(sh4geo VERSION 0.1.0 LANGUAGES CXX)
 
 # ---- Options ----
 option(DSO_SIMD "Enable SIMD kernels" ON)
+option(PRECOMPUTED_SQRT_SHFACS "Enable factor precomputation in SH algorithms" OFF)
 option(ENABLE_SANITIZERS "Enable Address/Undefined sanitizers (Debug only)" OFF)
 option(ENABLE_TESTING "Build unit tests" ON)
 option(ENABLE_BENCHMARKS "Build benchmarks" OFF)
