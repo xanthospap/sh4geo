@@ -2,7 +2,7 @@
 #include "gravity.hpp"
 #include <cmath>
 
-dso::CunninghamWeights::CunninghamWeights()
+dso::detail::CunninghamWeights::CunninghamWeights()
     : d1_wm1(MAX_N), d1_wm0(MAX_N), d1_wp1(MAX_N), d2_wm2(MAX_N), d2_wm1(MAX_N),
       d2_wm0(MAX_N), d2_wp1(MAX_N), d2_wp2(MAX_N) {
   for (int n = 0; n < MAX_N; ++n) {
@@ -57,7 +57,8 @@ dso::CunninghamWeights::CunninghamWeights()
   }
 }
 
-const dso::CunninghamWeights &dso::cunningham_weights() noexcept {
+const dso::detail::CunninghamWeights &
+dso::detail::cunningham_weights() noexcept {
   static const dso::CunninghamWeights w;
   return w;
 }

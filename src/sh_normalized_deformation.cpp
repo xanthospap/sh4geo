@@ -8,21 +8,10 @@
 
 namespace {
 
-struct _PrecomputedSqrts {
-  static const int N = dso::NormalizedLegendreFactors::MAX_SIZE_FOR_ALF_FACTORS;
-  std::array<double, N> sqnp3;
-
-  _PrecomputedSqrts() noexcept {
-    for (int i = 0; i < N; i++) {
-      sqnp3[i] = std::sqrt((double)(2 * i + 1) / (2 * i + 3));
-    }
-  }
-};
-
 int sh2deformation_impl(
     const dso::StokesCoeffs &cs, const Eigen::Vector3d &r, Eigen::Vector3d &dr,
-    Eigen::Vector3d &gravity, double &potential, int max_degree, int max_order,
-    double Re, double GM,
+    double gravity, double &potential, Eigen::Vector3d &potential_grad,
+    int max_degree, int max_order, double Re, double GM,
     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> &M,
     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise>
         &W) noexcept {
@@ -31,7 +20,8 @@ int sh2deformation_impl(
 #ifdef PRECOMPUTED_SQRT_SHFACS
   const auto &Cf = dso::cunningham_weights();
 #else
-  static const _PrecomputedSqrts psq;
+  const dso::detail::PrecomputedShSqrts psq =
+      dso::detail::precomputed_sh_sqrts();
 #endif
 
   /* effective degree and order */
@@ -211,8 +201,8 @@ int sh2deformation_impl(
   const int row_idx0 = degree - m;
   const double *__restrict__ csCnm = cs.Cnm().column(m) + row_idx0;
 #ifdef PRECOMPUTED_SQRT_SHFACS
-  const double *__restrict__ d1wm0 = Cf.d1_wm0.column(m) + row_idx0;
-  const double *__restrict__ d1wp1 = Cf.d1_wp1.column(m) + row_idx0;
+  const double *d1wm0 = Cf.d1_m0_wm0.data() + row_idx0;
+  const double *d1wp1 = Cf.d1_m0_wp1.data() + row_idx0;
   auto fsqrt3 = Cf.acc_scale.cbegin() + degree; /* square root factors */
 #else
   auto fsqrt3 = psq.sqnp3.cbegin() + degree; /* square root factors */
@@ -255,9 +245,9 @@ int sh2deformation_impl(
   /* Load Love numbers */
   const dso::LoadLoveNumbers &love = dso::groopsLoadLoveNumbers;
 
-  /* (accumulated) deformation, gravity and potential */
+  /* (accumulated) deformation, potential gradient and potential */
   dr = Eigen::Vector3d::Zero();
-  gravity = Eigen::Vector3d::Zero();
+  potential_grad = Eigen::Vector3d::Zero();
   potential = 0.0;
 
   Eigen::Vector3d an;
@@ -265,14 +255,14 @@ int sh2deformation_impl(
     an << accel_xn[i], accel_yn[i], accel_zn[i];
     an *= 1.0 / (2e0 * Re);
     dr += love.h[i] * potential_n[i] * u + love.l[i] * (an - an.dot(u) * u);
-    gravity += an;
+    potential_grad += an;
     potential += potential_n[i];
   }
 
   /* acceleration and potential in cartesian components */
-  gravity *= (GM / Re);
+  potential_grad *= (GM / Re);
   potential *= (GM / Re);
-  dr /= gravity.norm();
+  dr /= (GM / Re / gravity);
 
   return 0;
 }
@@ -280,8 +270,9 @@ int sh2deformation_impl(
 
 int dso::sh2deformation(
     const dso::StokesCoeffs &cs, const Eigen::Matrix<double, 3, 1> &r,
-    Eigen::Vector3d &dr, Eigen::Vector3d &gravity, double &potential,
-    int max_degree, int max_order, double Re, double GM,
+    Eigen::Vector3d &dr, double gravity, double &potential,
+    Eigen::Vector3d &potential_grad, int max_degree, int max_order, double Re,
+    double GM,
     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> *W,
     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise>
         *M) noexcept {
@@ -290,7 +281,7 @@ int dso::sh2deformation(
   if (max_degree < 0)
     max_degree = cs.max_degree();
   if (max_order < 0)
-    max_order = cs.max_order();
+    max_order = std::min(cs.max_order(), max_degree);
   if (max_order > max_degree) {
     fprintf(stderr,
             "[ERROR] Invalid degree/order for spherical harmonics expansion! "
@@ -328,18 +319,18 @@ int dso::sh2deformation(
   int delete_mem_pool[] = {0, 0};
   if (!W) {
     W = new dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise>(
-        max_degree + 1);
+        max_degree + 2);
     delete_mem_pool[0] = 1;
   }
   if (!M) {
     M = new dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise>(
-        max_degree + 1);
+        max_degree + 2);
     delete_mem_pool[1] = 1;
   }
 
   /* check scratch space */
-  if ((W->rows() < max_degree + 1) || (W->cols() < max_degree + 1) ||
-      (M->rows() < max_degree + 1) || (M->cols() < max_degree + 1)) {
+  if ((W->rows() < max_degree + 2) || (W->cols() < max_degree + 2) ||
+      (M->rows() < max_degree + 2) || (M->cols() < max_degree + 2)) {
     fprintf(stderr,
             "[ERROR] Invalid size of mem pool for spherical harmonics "
             "expansion! (traceback: %s)\n",
@@ -353,8 +344,9 @@ int dso::sh2deformation(
   }
 
   /* call core function */
-  int status = sh2deformation_impl(cs, r, dr, gravity, potential, max_degree,
-                                   max_order, Re, GM, *W, *M);
+  int status =
+      sh2deformation_impl(cs, r, dr, gravity, potential, potential_grad,
+                          max_degree, max_order, Re, GM, *W, *M);
 
   /* do we need to free memory ? */
   if (delete_mem_pool[0])

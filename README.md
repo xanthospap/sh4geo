@@ -9,7 +9,8 @@ ctest --test-dir build --output-on-failure
 ## Build Options
 
 - Build DEBUG version with sanitizer check: `cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DENABLE_SANITIZERS=ON`; run the tests (see below) to utilize sanitizer checking.
-- Build enabling SIMD operations `cmake -S . -B build -DDSO_SIMD=ON`
+- Build enabling SIMD operations `cmake -S . -B build -DDSO_SIMD=ON`.
+- Build enabling pre-computation of a series of SH factors that include square roots (see `dso::CunninghamWeights`). This will most probably make the code faster but augment required memory resources (~1 to 1.5 Mb). To use this optimization, compile with `PRECOMPUTED_SQRT_SHFACS=ON`.
 
 ## Testing
 
@@ -36,3 +37,8 @@ cmake --build build-simd-on -j
 ./build-simd-off/bench_axpy_lwtricolwise
 ./build-simd-on/bench_axpy_lwtricolwise
 ```
+
+
+### Precomputing SH (Cunningham) Weight
+
+- build the benchmark with no `PRECOMPUTED_SQRT_SHFACS=[ON|OFF]` and then compare using the program  `bench/bench_sh2gradient`.

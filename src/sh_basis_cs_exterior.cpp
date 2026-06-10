@@ -38,10 +38,9 @@ int dso::gravity::sh_basis_cs_exterior(
     return 1;
   }
 
-  /* Factors up to degree/order MAX_SIZE_FOR_ALF_FACTORS. Constructed only on
-   * the first function call
-   */
-  static const dso::NormalizedLegendreFactors F;
+  /* Factors up to degree/order MAX_SIZE_FOR_ALF_FACTORS. */
+  const dso::detail::NormalizedLegendreFactors &F =
+      dso::detail::normalized_legendre_factors();
 
   /* (kinda) Associated Legendre Polynomials M and W
    * note that since we are going to compute derivatives (of the gravity

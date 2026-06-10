@@ -7,12 +7,10 @@
 
 #include "eigen3/Eigen/Eigen"
 #include "stokes_coefficients.hpp"
-// #include "geodesy/transformations.hpp"
-// #include "iers2010/load_love_numbers.hpp"
-// #include "iers2010/stokes_coefficients.hpp"
 
 namespace dso {
 
+namespace detail {
 struct NormalizedLegendreFactors {
   /* Max size for ALF factors; if degree is more than this, then it must
    * be augmented. For now, OK
@@ -52,6 +50,14 @@ struct NormalizedLegendreFactors {
    */
   NormalizedLegendreFactors() noexcept;
 }; /* struct NormalizedLegendreFactors */
+const NormalizedLegendreFactors &normalized_legendre_factors() noexcept;
+
+struct PrecomputedShSqrts {
+  static const int N = NormalizedLegendreFactors::MAX_SIZE_FOR_ALF_FACTORS;
+  std::array<double, N> sqnp3;
+  std::array<double, N> sqnp5;
+};
+const PrecomputedShSqrts &precomputed_sh_sqrts() noexcept;
 
 #ifdef PRECOMPUTED_SQRT_SHFACS
 struct CunninghamWeights {
@@ -83,6 +89,8 @@ struct CunninghamWeights {
 };
 const CunninghamWeights &cunningham_weights() noexcept;
 #endif
+
+} /* namespace detail */
 
 /** Acceleration due to point mass at r_cb on a mass at r.
  *
@@ -138,40 +146,138 @@ const CunninghamWeights &cunningham_weights() noexcept;
 //                         const Eigen::Matrix<double, 3, 1> &rcb, double GMcb,
 //                         Eigen::Matrix<double, 3, 3> &jacobian) noexcept;
 
-/** Spherical harmonics of Earth's gravity potential to acceleration and
- *  gradient using the algorithm due to Cunningham. The acceleration and
- *  gradient are computed in Cartesian components, i.e.
+/** @brief Compute gravitational acceleration and gravity-gradient tensor from
+ *         normalized spherical-harmonic Stokes coefficients.
  *
- *  acceleration = (ax, ay, az), and
+ *  This routine evaluates the exterior gravitational potential of a body
+ *  represented by normalized Stokes coefficients and returns:
  *
- *             | dax/dx dax/dy dax/dz |
- *  gradient = | day/dx day/dy day/dz |
- *             | daz/dx daz/dy daz/dz |
+ *  - the Cartesian gravitational acceleration vector
+ *    @f[
+ *      \mathbf{a}(\mathbf{r}) = \nabla V(\mathbf{r}),
+ *    @f]
+ *  - and the Cartesian gravity-gradient tensor (the Hessian of the potential)
+ *    @f[
+ *      \mathbf{\Gamma}(\mathbf{r}) = \nabla \nabla V(\mathbf{r}).
+ *    @f]
  *
- * @param[in] cs Normalized Stokes coefficients of spherical harmonics
- * @param[in] r  Position vector of satellite (aka point of computation) in
- *               an ECEF frame (e.g. ITRF)
- * @param[in] max_degree Max degree of spherical harmonics expansion. If set
- *               to a negative number, the degree of expansion will be derived
- *               from the cs input parameter, i.e. cs.max_degree()
- * @param[in] max_order  Max order of spherical harmonics expansion. If set
- *               to a negative number, the order of expansion will be derived
- *               from the cs input parameter, i.e. cs.max_order()
- * @param[in] Re Equatorial radius of the Earth in [m]. If set to a negative
- *               number, then the cs.Re() method will be used to get it.
- * @param[in] GM Gravitational constant of Earth. If set to a negative
- *               number, then the cs.GM() method will be used to get it.
- * @param[out] acc Acceleration in cartesian components in [m/s^2]
- * @param[out] gradient Gradient of acceleration in cartesian components
- * @param[in] W   A convinient storage space, as Column-Wise Lower Triangular
- *                matrix off dimensions at least (max_degree+2, max_degree+2).
- *                If not given, then the function will allocate and free the
- *                required memmory.
- * @param[in] M   A convinient storage space, as Column-Wise Lower Triangular
- *                matrix off dimensions at least (max_degree+2, max_degree+2)
- *                If not given, then the function will allocate and free the
- *                required memmory.
- * @return        Anything other than zero denotes an error.
+ *  The potential is understood in the usual normalized spherical-harmonic form
+ *  for the exterior field,
+ *  @f[
+ *    V(\mathbf{r}) =
+ *    \frac{GM}{R_e}
+ *    \sum_{n=0}^{N}
+ *    \sum_{m=0}^{\min(n,M)}
+ *    \left(
+ *      \bar{C}_{nm}\,C_{nm}\!\left(\frac{\mathbf{r}}{R_e}\right)
+ *      +
+ *      \bar{S}_{nm}\,S_{nm}\!\left(\frac{\mathbf{r}}{R_e}\right)
+ *    \right),
+ *  @f]
+ *  where:
+ *  - @f$\bar{C}_{nm}, \bar{S}_{nm}@f$ are the normalized Stokes coefficients,
+ *  - @f$C_{nm}(\mathbf{r}/R_e), S_{nm}(\mathbf{r}/R_e)@f$ are the corresponding
+ *    exterior spherical-harmonic basis functions evaluated at the normalized
+ *    position,
+ *  - @f$GM@f$ is the gravitational parameter,
+ *  - and @f$R_e@f$ is the reference radius.
+ *
+ *  The computation follows the Cunningham approach for Cartesian first and
+ *  second derivatives of the spherical-harmonic potential. Accumulation of the
+ *  harmonic contributions is arranged so that smaller-magnitude contributions
+ *  are summed before the dominant low-degree terms, in order to reduce loss of
+ *  numerical precision.
+ *
+ *  The returned quantities are expressed in Cartesian components:
+ *
+ *  @f[
+ *    \mathbf{a} =
+ *    \begin{bmatrix}
+ *      a_x \\ a_y \\ a_z
+ *    \end{bmatrix},
+ *  @f]
+ *
+ *  @f[
+ *    \mathbf{\Gamma} =
+ *    \begin{bmatrix}
+ *      \partial a_x/\partial x & \partial a_x/\partial y & \partial
+ * a_x/\partial z \\
+ *      \partial a_y/\partial x & \partial a_y/\partial y & \partial
+ * a_y/\partial z \\
+ *      \partial a_z/\partial x & \partial a_z/\partial y & \partial
+ * a_z/\partial z
+ *    \end{bmatrix}
+ *    =
+ *    \begin{bmatrix}
+ *      \partial^2 V/\partial x^2 &
+ *      \partial^2 V/\partial x \partial y &
+ *      \partial^2 V/\partial x \partial z \\
+ *      \partial^2 V/\partial y \partial x &
+ *      \partial^2 V/\partial y^2 &
+ *      \partial^2 V/\partial y \partial z \\
+ *      \partial^2 V/\partial z \partial x &
+ *      \partial^2 V/\partial z \partial y &
+ *      \partial^2 V/\partial z^2
+ *    \end{bmatrix}.
+ *  @f]
+ *
+ *  For points exterior to the attracting masses, the tensor is symmetric and
+ *  satisfies Laplace's equation,
+ *  @f[
+ *    \Gamma_{xx} + \Gamma_{yy} + \Gamma_{zz} = 0.
+ *  @f]
+ *
+ *  @param[in] cs Normalized Stokes coefficients defining the gravity field.
+ *
+ *  @param[in] r  Geocentric Cartesian position vector of the evaluation point,
+ *                expressed in an Earth-fixed frame (for example ECEF / ITRF),
+ *                in metres.
+ *
+ *  @param[out] acc Cartesian gravitational acceleration vector
+ *                  @f$\nabla V(\mathbf{r})@f$, in
+ * @f$[\mathrm{m}\,\mathrm{s}^{-2}]@f$.
+ *
+ *  @param[out] gradient Cartesian gravity-gradient tensor
+ *                       @f$\nabla\nabla V(\mathbf{r})@f$, in
+ *                       @f$[\mathrm{s}^{-2}]@f$.
+ *
+ *  @param[in] max_degree Maximum spherical-harmonic degree of the expansion.
+ *                        If negative, the maximum available degree in
+ *                        @p cs is used.
+ *
+ *  @param[in] max_order  Maximum spherical-harmonic order of the expansion.
+ *                        If negative, the maximum admissible order is derived
+ *                        from @p cs and the chosen degree truncation.
+ *
+ *  @param[in] Re Reference radius @f$R_e@f$ in metres. If negative, the value
+ *                stored in @p cs is used.
+ *
+ *  @param[in] GM Gravitational parameter @f$GM@f$ in
+ *                @f$[\mathrm{m}^3\,\mathrm{s}^{-2}]@f$. If negative, the value
+ *                stored in @p cs is used.
+ *
+ *  @param[in] W Optional scratch matrix used internally to store one family of
+ *               spherical-harmonic basis values. If provided, it must be a
+ *               lower-triangular, column-wise matrix of dimensions at least
+ *               @f$(\texttt{max\_degree}+3) \times (\texttt{max\_degree}+3)@f$.
+ *               If not provided, the routine allocates and frees the required
+ *               temporary storage internally.
+ *
+ *  @param[in] M Optional scratch matrix used internally to store the companion
+ *               family of spherical-harmonic basis values. If provided, it
+ *               must be a lower-triangular, column-wise matrix of dimensions at
+ *               least
+ *               @f$(\texttt{max\_degree}+3) \times (\texttt{max\_degree}+3)@f$.
+ *               If not provided, the routine allocates and frees the required
+ *               temporary storage internally.
+ *
+ *  @return Zero on success. Any non-zero return value denotes failure.
+ *
+ *  @note This routine evaluates the exterior field only.
+ *
+ *  @warning If scratch matrices @p W and @p M are supplied by the caller, they
+ *           must refer to distinct storage objects and must be large enough for
+ *           the requested truncation.
  */
 [[nodiscard]]
 int sh2gradient(
@@ -183,6 +289,83 @@ int sh2gradient(
     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> *M =
         nullptr) noexcept;
 
+/** @brief Compute gravitational potential from normalized spherical-harmonic
+ *         Stokes coefficients.
+ *
+ *  This routine evaluates the exterior gravitational potential generated by a
+ *  set of normalized Stokes coefficients at a geocentric Cartesian position.
+ *
+ *  The potential is assumed in the normalized exterior spherical-harmonic form
+ *  @f[
+ *    V(\mathbf{r}) =
+ *    \frac{GM}{R_e}
+ *    \sum_{n=0}^{N}
+ *    \sum_{m=0}^{\min(n,M)}
+ *    \left(
+ *      \bar{C}_{nm}\,C_{nm}\!\left(\frac{\mathbf{r}}{R_e}\right)
+ *      +
+ *      \bar{S}_{nm}\,S_{nm}\!\left(\frac{\mathbf{r}}{R_e}\right)
+ *    \right),
+ *  @f]
+ *  where:
+ *  - @f$\bar{C}_{nm}, \bar{S}_{nm}@f$ are the normalized Stokes coefficients,
+ *  - @f$C_{nm}, S_{nm}@f$ are the corresponding exterior basis functions,
+ *  - @f$GM@f$ is the gravitational parameter,
+ *  - and @f$R_e@f$ is the reference radius.
+ *
+ *  The computation is performed using the same exterior spherical-harmonic
+ *  basis functions employed in the Cunningham-style derivative routines, but
+ *  here only the scalar potential itself is accumulated. Harmonic
+ *  contributions are summed from smaller to larger magnitude in order to
+ *  reduce loss of numerical precision.
+ *
+ *  @param[in] cs Normalized Stokes coefficients defining the gravity field.
+ *
+ *  @param[in] r Geocentric Cartesian position vector of the evaluation point,
+ *               expressed in an Earth-fixed frame (for example ECEF / ITRF),
+ *               in metres.
+ *
+ *  @param[out] U Gravitational potential at the evaluation point, in
+ *                @f$[\mathrm{m}^2\,\mathrm{s}^{-2}]@f$.
+ *
+ *  @param[in] max_degree Maximum spherical-harmonic degree of the expansion.
+ *                        If negative, the maximum available degree in
+ *                        @p cs is used.
+ *
+ *  @param[in] max_order Maximum spherical-harmonic order of the expansion.
+ *                       If negative, the maximum admissible order is derived
+ *                       from @p cs and the chosen degree truncation.
+ *
+ *  @param[in] Re Reference radius @f$R_e@f$ in metres. If negative, the value
+ *                stored in @p cs is used.
+ *
+ *  @param[in] GM Gravitational parameter @f$GM@f$ in
+ *                @f$[\mathrm{m}^3\,\mathrm{s}^{-2}]@f$. If negative, the value
+ *                stored in @p cs is used.
+ *
+ *  @param[in] W Optional scratch matrix used internally to store one family of
+ *               spherical-harmonic basis values. If provided, it must be a
+ *               lower-triangular, column-wise matrix of dimensions at least
+ *               @f$(\texttt{max\_degree}+1) \times (\texttt{max\_degree}+1)@f$.
+ *               If not provided, temporary storage is allocated and released
+ *               internally.
+ *
+ *  @param[in] M Optional scratch matrix used internally to store the companion
+ *               family of spherical-harmonic basis values. If provided, it
+ *               must be a lower-triangular, column-wise matrix of dimensions at
+ *               least
+ *               @f$(\texttt{max\_degree}+1) \times (\texttt{max\_degree}+1)@f$.
+ *               If not provided, temporary storage is allocated and released
+ *               internally.
+ *
+ *  @return Zero on success. Any non-zero return value denotes failure.
+ *
+ *  @note This routine evaluates the exterior field only.
+ *
+ *  @warning If scratch matrices @p W and @p M are supplied by the caller, they
+ *           must refer to distinct storage objects and must be large enough for
+ *           the requested truncation.
+ */
 [[nodiscard]]
 int sh2potential(
     const dso::StokesCoeffs &cs, const Eigen::Matrix<double, 3, 1> &r,
@@ -191,6 +374,213 @@ int sh2potential(
     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise>
         *M) noexcept;
 
+/** @brief Compute gravitational acceleration from normalized spherical-harmonic
+ *         Stokes coefficients.
+ *
+ *  This routine evaluates the exterior gravitational potential defined by a
+ *  set of normalized Stokes coefficients and returns its Cartesian gradient,
+ *  i.e. the gravitational acceleration vector
+ *  @f[
+ *    \mathbf{g}(\mathbf{r}) = \nabla V(\mathbf{r}).
+ *  @f]
+ *
+ *  The potential is assumed in the normalized exterior spherical-harmonic form
+ *  @f[
+ *    V(\mathbf{r}) =
+ *    \frac{GM}{R_e}
+ *    \sum_{n=0}^{N}
+ *    \sum_{m=0}^{\min(n,M)}
+ *    \left(
+ *      \bar{C}_{nm}\,C_{nm}\!\left(\frac{\mathbf{r}}{R_e}\right)
+ *      +
+ *      \bar{S}_{nm}\,S_{nm}\!\left(\frac{\mathbf{r}}{R_e}\right)
+ *    \right),
+ *  @f]
+ *  where:
+ *  - @f$\bar{C}_{nm}, \bar{S}_{nm}@f$ are the normalized Stokes coefficients,
+ *  - @f$C_{nm}, S_{nm}@f$ are the corresponding exterior basis functions,
+ *  - @f$GM@f$ is the gravitational parameter,
+ *  - and @f$R_e@f$ is the reference radius.
+ *
+ *  The Cartesian acceleration is computed using the Cunningham formulation for
+ *  first derivatives of the spherical-harmonic potential. Harmonic
+ *  contributions are accumulated from smaller to larger magnitude in order to
+ *  reduce loss of numerical precision.
+ *
+ *  The returned vector is
+ *  @f[
+ *    \mathbf{g} =
+ *    \begin{bmatrix}
+ *      g_x \\ g_y \\ g_z
+ *    \end{bmatrix}
+ *    =
+ *    \begin{bmatrix}
+ *      \partial V/\partial x \\
+ *      \partial V/\partial y \\
+ *      \partial V/\partial z
+ *    \end{bmatrix},
+ *  @f]
+ *  expressed in Cartesian components.
+ *
+ *  @param[in] cs Normalized Stokes coefficients defining the gravity field.
+ *
+ *  @param[in] r Geocentric Cartesian position vector of the evaluation point,
+ *               expressed in an Earth-fixed frame (for example ECEF / ITRF),
+ *               in metres.
+ *
+ *  @param[out] gravity Cartesian gravitational acceleration vector
+ *                      @f$\nabla V(\mathbf{r})@f$, in
+ *                      @f$[\mathrm{m}\,\mathrm{s}^{-2}]@f$.
+ *
+ *  @param[in] max_degree Maximum spherical-harmonic degree of the expansion.
+ *                        If negative, the maximum available degree in
+ *                        @p cs is used.
+ *
+ *  @param[in] max_order Maximum spherical-harmonic order of the expansion.
+ *                       If negative, the maximum admissible order is derived
+ *                       from @p cs and the chosen degree truncation.
+ *
+ *  @param[in] Re Reference radius @f$R_e@f$ in metres. If negative, the value
+ *                stored in @p cs is used.
+ *
+ *  @param[in] GM Gravitational parameter @f$GM@f$ in
+ *                @f$[\mathrm{m}^3\,\mathrm{s}^{-2}]@f$. If negative, the value
+ *                stored in @p cs is used.
+ *
+ *  @param[in] W Optional scratch matrix used internally to store one family of
+ *               spherical-harmonic basis values. If provided, it must be a
+ *               lower-triangular, column-wise matrix of dimensions at least
+ *               @f$(\texttt{max\_degree}+2) \times (\texttt{max\_degree}+2)@f$.
+ *               If not provided, temporary storage is allocated and released
+ *               internally.
+ *
+ *  @param[in] M Optional scratch matrix used internally to store the companion
+ *               family of spherical-harmonic basis values. If provided, it
+ *               must be a lower-triangular, column-wise matrix of dimensions at
+ *               least
+ *               @f$(\texttt{max\_degree}+2) \times (\texttt{max\_degree}+2)@f$.
+ *               If not provided, temporary storage is allocated and released
+ *               internally.
+ *
+ *  @return Zero on success. Any non-zero return value denotes failure.
+ *
+ *  @note This routine evaluates the exterior field only.
+ *
+ *  @warning If scratch matrices @p W and @p M are supplied by the caller, they
+ *           must refer to distinct storage objects and must be large enough for
+ *           the requested truncation.
+ */
+[[nodiscard]]
+int sh2gravity(
+    const dso::StokesCoeffs &cs, const Eigen::Matrix<double, 3, 1> &r,
+    Eigen::Vector3d &gravity, int max_degree, int max_order, double Re,
+    double GM,
+    dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> *W,
+    dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise>
+        *M) noexcept;
+
+/** @brief Compute elastic surface displacement due to loading from normalized
+ *         spherical-harmonic Stokes coefficients.
+ *
+ *  This routine evaluates, at a geocentric Cartesian position, the elastic
+ *  deformation induced by a gravity/load field represented by normalized
+ *  spherical-harmonic Stokes coefficients.
+ *
+ *  The implementation follows the same Cunningham-based first-derivative
+ *  spherical-harmonic machinery used for gravity evaluation: for each degree
+ *  @f$n@f$, it forms:
+ *
+ *  - the degree contribution to the potential,
+ *    @f$V_n(\mathbf{r})@f$,
+ *  - and the degree contribution to the Cartesian gradient of the potential,
+ *    @f$\nabla V_n(\mathbf{r})@f$.
+ *
+ *  The total displacement is then formed degree by degree from the vertical
+ *  and horizontal load Love numbers:
+ *  @f[
+ *    \mathbf{d} =
+ *    \sum_{n=0}^{N}
+ *    \left[
+ *      \frac{h_n}{g}\,V_n\,\hat{\mathbf{u}}
+ *      +
+ *      \frac{l_n}{g}
+ *      \left(
+ *        \nabla V_n - (\nabla V_n \cdot \hat{\mathbf{u}})\hat{\mathbf{u}}
+ *      \right)
+ *    \right],
+ *  @f]
+ *  where:
+ *  - @f$h_n@f$ are the vertical load Love numbers,
+ *  - @f$l_n@f$ are the horizontal load Love numbers,
+ *  - @f$g@f$ is the local gravity magnitude used in the deformation model,
+ *  - and @f$\hat{\mathbf{u}} = \mathbf{r}/\|\mathbf{r}\|@f$ is the radial unit
+ *    vector at the evaluation point.
+ *
+ *  In addition to the displacement, the routine also returns:
+ *  - the Cartesian gravity vector
+ *    @f[
+ *      \mathbf{g}(\mathbf{r}) = \nabla V(\mathbf{r}),
+ *    @f]
+ *  - and the scalar potential
+ *    @f[
+ *      V(\mathbf{r}).
+ *    @f]
+ *
+ *  @param[in] cs Normalized Stokes coefficients defining the loading/gravity
+ *                field.
+ *
+ *  @param[in] r Geocentric Cartesian position vector of the evaluation point,
+ *               expressed in an Earth-fixed frame, in metres.
+ *
+ *  @param[out] dr Deformation vector in Cartesian components, in metres.
+ *
+ *  @param[out] gravity Cartesian gravity vector @f$\nabla V(\mathbf{r})@f$,
+ *                      in @f$[\mathrm{m}\,\mathrm{s}^{-2}]@f$.
+ *
+ *  @param[out] potential Scalar potential at the evaluation point, in
+ *                        @f$[\mathrm{m}^2\,\mathrm{s}^{-2}]@f$.
+ *
+ *  @param[in] max_degree Maximum spherical-harmonic degree. If negative, the
+ *                        maximum available degree in @p cs is used.
+ *
+ *  @param[in] max_order Maximum spherical-harmonic order. If negative, the
+ *                       maximum admissible order is derived from @p cs and the
+ *                       chosen degree truncation.
+ *
+ *  @param[in] Re Reference radius @f$R_e@f$ in metres. If negative, the value
+ *                stored in @p cs is used.
+ *
+ *  @param[in] GM Gravitational parameter @f$GM@f$ in
+ *                @f$[\mathrm{m}^3\,\mathrm{s}^{-2}]@f$. If negative, the value
+ *                stored in @p cs is used.
+ *
+ *  @param[in] W Optional scratch matrix used internally to store one family of
+ *               spherical-harmonic basis values. If provided, it must be a
+ *               lower-triangular, column-wise matrix of dimensions at least
+ *               @f$(\texttt{max\_degree}+2) \times (\texttt{max\_degree}+2)@f$.
+ *               If not provided, temporary storage is allocated and released
+ *               internally.
+ *
+ *  @param[in] M Optional scratch matrix used internally to store the companion
+ *               family of spherical-harmonic basis values. If provided, it
+ *               must be a lower-triangular, column-wise matrix of dimensions at
+ *               least
+ *               @f$(\texttt{max\_degree}+2) \times (\texttt{max\_degree}+2)@f$.
+ *               If not provided, temporary storage is allocated and released
+ *               internally.
+ *
+ *  @return Zero on success. Any non-zero return value denotes failure.
+ *
+ *  @note This routine evaluates the exterior field only.
+ *
+ *  @warning If scratch matrices @p W and @p M are supplied by the caller, they
+ *           must refer to distinct storage objects and must be large enough for
+ *           the requested truncation.
+ *
+ *  @warning Correct deformation requires a consistent choice of load Love
+ *           numbers and of the gravity magnitude entering the displacement
+ *           formula.
+ */
 /** @brief Compute surface displacement due to a surface load.
  *
  * Computes the 3D displacement vector, dr, of a point on the Earth's surface
@@ -209,27 +599,6 @@ int sh2potential(
  *            deformation respectively)
  * r        : Local upward (radial) unit vector
  *
- * @param[in] point A point on or outside the Earth, specified by its
- *            geocentric cartesian coordinates (ITRF) [m]
- * @param[in] cs Stokes coefficients of the surface load, the 'source' of the
- *            displacement
- * @param[out] dr Displacement vector at the point of interest, in cartesian
- *            coordiantes [m]. Hence, the point will have moved to
- *            new_location = point + dr
- * @param[out] gravity Gravity acceleration at the point of interest (since we
- *            are computing it, we might as well return it!) in [m/s^2]
- * @param[out] potential The (total) gravitational potential at the point of
- *            interest (since we are computing it, we might as well return
- *            it!) in [m/s^2]
- * @param[in] max_degree Max degree of spherical harmonics expansion. Should
- *            be max_degree <= cs.max_degree().
- * @param[in] max_order Max order of spherical harmonics expansion. Should
- *            be max_order <= cs.max_order() and max_order <= max_degree.
- * @param[inout] M Scratch space to be used by the function. The matrix should
- *            have size at least >= max_degree+2
- * @param[inout] W Scratch space to be used by the function. The matrix should
- *            have size at least >= max_degree+2
- * @return Anything other than zero denotes an error.
  */
 [[nodiscard]]
 int sh2deformation(
@@ -289,113 +658,6 @@ int sh_basis_cs_exterior(
     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise>
         &S) noexcept;
 } /* namespace gravity */
-
-/** @brief Computes the 3D displacement vector due to surface mass loading.
- *
- * This is just a wrapper for dso::gravity::sh_deformation
- *
- * @param[in] point A point on or outside the Earth, specified by its
- *            geocentric cartesian coordinates (ITRF) [m]
- * @param[in] cs Stokes coefficients of the surface load, the 'source' of the
- *            displacement
- * @param[out] dr Displacement vector at the point of interest, in cartesian
- *            coordiantes [m]. Hence, the point will have moved to
- *            new_location = point + dr
- * @param[out] gravity Gravity acceleration at the point of interest (since we
- *            are computing it, we might as well return it!) in [m/s^2]
- * @param[out] potential The (total) gravitational potential at the point of
- *            interest (since we are computing it, we might as well return
- *            it!) in [m/s^2]
- * @param[in] max_degree Max degree of spherical harmonics expansion. Should
- *            be max_degree <= cs.max_degree(). If set to a negative number,
- *            cs.max_degree() will be used.
- * @param[in] max_order Max order of spherical harmonics expansion. Should
- *            be max_order <= cs.max_order() and max_order <= max_degree. If
- *            set to a negative number, cs.max_order() will be used.
- * @param[inout] M Scratch space to be used by the function. The matrix should
- *            have size at least >= max_degree+2. If not provided, it will be
- *            allocated.
- * @param[inout] W Scratch space to be used by the function. The matrix should
- *            have size at least >= max_degree+2. If not provided, it will be
- *            allocated.
- * @return Anything other than zero denotes an error.
- */
-//[[nodiscard]] int sh_deformation(
-//    const Eigen::Vector3d &rsta, const dso::StokesCoeffs &cs,
-//    Eigen::Vector3d &gravity, double &potential, Eigen::Vector3d &dr,
-//    int max_degree = -1, int max_order = -1,
-//    dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> *M =
-//        nullptr,
-//    dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> *W =
-//        nullptr) noexcept;
-
-/** @brief Compute the gravitational potential from normalized Stokes
- * coefficients.
- *
- * Computes the scalar gravitational potential at an Earth-fixed Cartesian point
- * using the spherical-harmonic model stored in `cs`.
- *
- * The input point must be expressed in the same terrestrial frame as the
- * geopotential coefficients, typically ITRF/ECEF.
- *
- * The returned potential has units of:
- *
- *     m^2 / s^2
- *
- * The computation uses normalized exterior spherical-harmonic basis functions
- * and column-major lower-triangular coefficient storage.
- *
- * @param[in]  cs
- *     Spherical-harmonic/Stokes coefficient set. Supplies `Cnm`, `Snm`,
- *     reference radius, gravitational constant, and maximum degree/order.
- *
- * @param[in]  point
- *     Earth-fixed Cartesian position vector, in metres, where the potential is
- *     evaluated.
- *
- * @param[out] potential
- *     Computed gravitational potential at `point`, in m^2/s^2.
- *
- * @param[in]  max_degree
- *     Maximum spherical-harmonic degree to use. If negative, the maximum degree
- *     available in `cs` is used.
- *
- * @param[in]  max_order
- *     Maximum spherical-harmonic order to use. If negative, the maximum order
- *     available in `cs` is used. Must satisfy `max_order <= max_degree`.
- *
- * @param[in]  Re
- *     Reference radius of the spherical-harmonic model, in metres. If negative,
- *     `cs.Re()` is used.
- *
- * @param[in]  GM
- *     Gravitational parameter of the model, in m^3/s^2. If negative, `cs.GM()`
- *     is used.
- *
- * @param[in,out] M
- *     Optional scratch matrix for cosine/exterior basis terms. If supplied, it
- *     must have at least `(max_degree + 1)` rows and `(max_order + 1)` columns.
- *
- * @param[in,out] W
- *     Optional scratch matrix for sine/exterior basis terms. If supplied, it
- *     must have at least `(max_degree + 1)` rows and `(max_order + 1)` columns.
- *
- * @return
- *     `0` on success; non-zero on invalid input, insufficient scratch storage,
- *     or failure while computing basis functions.
- *
- * @warning
- *     The normalization convention of `cs.C(n,m)` and `cs.S(n,m)` must match
- *     the normalization used by `sh_basis_cs_exterior()`.
- */
-// int sh_potential(
-//     const dso::StokesCoeffs &cs, const Eigen::Vector3d &point,
-//     double &potential, int max_degree = -1, int max_order = -1,
-//     double Re = -1.0, double GM = -1.0,
-//     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> *M =
-//         nullptr,
-//     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> *W =
-//         nullptr) noexcept;
 
 } /* namespace dso */
 

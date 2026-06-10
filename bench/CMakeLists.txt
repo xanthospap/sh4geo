@@ -18,11 +18,11 @@ target_link_libraries(bench_axpy2_lwtricolwise
     benchmark::benchmark
 )
 
-add_executable(bench_sh2gradient
+add_executable(bench_sh2gradient_precompute
   bench_sh2gradient.cpp
 )
 
-target_link_libraries(bench_sh2gradient
+target_link_libraries(bench_sh2gradient_precompute
   PRIVATE
     stokes_coeffs
     benchmark::benchmark

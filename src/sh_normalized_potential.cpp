@@ -92,7 +92,7 @@ int dso::sh2potential(
   if (max_degree < 0)
     max_degree = cs.max_degree();
   if (max_order < 0)
-    max_order = cs.max_order();
+    max_order = std::min(cs.max_order(), max_degree);
   if (max_order > max_degree) {
     fprintf(stderr,
             "[ERROR] Invalid degree/order for spherical harmonics expansion! "
@@ -124,8 +124,8 @@ int dso::sh2potential(
     GM = cs.GM();
 
   /* allocate (if needed) scratch space; for the scratch space we will be
-   * computing terms up to [0, degree/order + 2], hence our scratch matrices
-   * should be able to hold degree/order + 3 elements.
+   * computing terms up to [0, degree/order], hence our scratch matrices
+   * should be able to hold degree/order + 1 elements.
    */
   int delete_mem_pool[] = {0, 0};
   if (!W) {

@@ -2,7 +2,7 @@
 #include <array>
 #include <cmath>
 
-dso::NormalizedLegendreFactors::NormalizedLegendreFactors() noexcept
+dso::detail::NormalizedLegendreFactors::NormalizedLegendreFactors() noexcept
     : f1(MAX_SIZE_FOR_ALF_FACTORS), f2(MAX_SIZE_FOR_ALF_FACTORS) {
   constexpr const int N = MAX_SIZE_FOR_ALF_FACTORS;
   f1.fill_with(0e0);
@@ -32,4 +32,10 @@ dso::NormalizedLegendreFactors::NormalizedLegendreFactors() noexcept
 
   /* all computations done */
   return;
+}
+
+const dso::detail::NormalizedLegendreFactors &
+dso::detail::normalized_legendre_factors() noexcept {
+  static const dso::detail::NormalizedLegendreFactors f;
+  return f;
 }
