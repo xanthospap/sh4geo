@@ -1,4 +1,4 @@
-#include "gravity"
+#include "gravity.hpp"
 #include <array>
 #include <cmath>
 

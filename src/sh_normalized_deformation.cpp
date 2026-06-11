@@ -18,7 +18,7 @@ int sh2deformation_impl(
 
   /* precomputed square roots and factors */
 #ifdef PRECOMPUTED_SQRT_SHFACS
-  const auto &Cf = dso::cunningham_weights();
+  const auto &Cf = dso::detail::cunningham_weights();
 #else
   const dso::detail::PrecomputedShSqrts psq =
       dso::detail::precomputed_sh_sqrts();
@@ -262,17 +262,16 @@ int sh2deformation_impl(
   /* acceleration and potential in cartesian components */
   potential_grad *= (GM / Re);
   potential *= (GM / Re);
-  dr /= (GM / Re / gravity);
+  dr *= (GM / Re / gravity);
 
   return 0;
 }
 } /* anonymous namespace */
 
 int dso::sh2deformation(
-    const dso::StokesCoeffs &cs, const Eigen::Matrix<double, 3, 1> &r,
-    Eigen::Vector3d &dr, double gravity, double &potential,
-    Eigen::Vector3d &potential_grad, int max_degree, int max_order, double Re,
-    double GM,
+    const dso::StokesCoeffs &cs, const Eigen::Vector3d &r, Eigen::Vector3d &dr,
+    double gravity, double &potential, Eigen::Vector3d &potential_grad,
+    int max_degree, int max_order, double Re, double GM,
     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> *W,
     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise>
         *M) noexcept {
@@ -313,8 +312,8 @@ int dso::sh2deformation(
     GM = cs.GM();
 
   /* allocate (if needed) scratch space; for the scratch space we will be
-   * computing terms up to [0, degree/order + 2], hence our scratch matrices
-   * should be able to hold degree/order + 3 elements.
+   * computing terms up to [0, degree/order + 1], hence our scratch matrices
+   * should be able to hold degree/order + 2 elements.
    */
   int delete_mem_pool[] = {0, 0};
   if (!W) {

@@ -29,7 +29,8 @@ int dso::gravity::sh_basis_cs_exterior(
   }
 
   /* check if we are ok with the NormalizedLegendreFactors size */
-  constexpr int N = dso::NormalizedLegendreFactors::MAX_SIZE_FOR_ALF_FACTORS;
+  constexpr int N =
+      dso::detail::NormalizedLegendreFactors::MAX_SIZE_FOR_ALF_FACTORS;
   if (max_degree >= N || max_order >= N) {
     fprintf(stderr,
             "[Einv_r2OR] (Static) Size for NormalizedLegendreFactors must be "

@@ -1,13 +1,15 @@
 add_library(stokes_coeffs
-  stokes_coefficients.cpp
-  sh_basis_cs_exterior.cpp
-  sh_normalized_gradient.cpp
-  sh2gradient_cunningham_impl_simd.cpp
-  sh_normalized_potential.cpp
-  sh_normalized_deformation.cpp
   cunningham_weights.cpp
-  normalized_legendre_factors.cpp
   load_love_numbers.cpp
+  normalized_legendre_factors.cpp
+  point_mass.cpp
+  precomputed_sh_sqrts.cpp
+  sh_basis_cs_exterior.cpp
+  sh_normalized_deformation.cpp
+  sh_normalized_gradient.cpp
+  sh_normalized_gravity.cpp
+  sh_normalized_potential.cpp
+  stokes_coefficients.cpp
 )
 
 target_include_directories(stokes_coeffs

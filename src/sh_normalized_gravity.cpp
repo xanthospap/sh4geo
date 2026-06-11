@@ -15,7 +15,7 @@ int sh2gradient_acceleration_impl(
         &M) noexcept {
 
   if (max_degree >
-      dso::NormalizedLegendreFactors::MAX_SIZE_FOR_ALF_FACTORS - 2) {
+      dso::detail::NormalizedLegendreFactors::MAX_SIZE_FOR_ALF_FACTORS - 2) {
     fprintf(stderr,
             "[ERROR] (Static) Size for NormalizedLegendreFactors must be "
             "augmented to perform computation (traceback: %s)\n",
@@ -25,7 +25,7 @@ int sh2gradient_acceleration_impl(
 
   /* precomputed square roots */
 #ifdef PRECOMPUTED_SQRT_SHFACS
-  const auto &Cf = dso::cunningham_weights();
+  const auto &Cf = dso::detail::cunningham_weights();
 #else
   const dso::detail::PrecomputedShSqrts &psq =
       dso::detail::precomputed_sh_sqrts();

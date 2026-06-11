@@ -59,7 +59,7 @@ dso::detail::CunninghamWeights::CunninghamWeights()
 
 const dso::detail::CunninghamWeights &
 dso::detail::cunningham_weights() noexcept {
-  static const dso::CunninghamWeights w;
+  static const dso::detail::CunninghamWeights w;
   return w;
 }
 

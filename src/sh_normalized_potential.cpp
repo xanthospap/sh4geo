@@ -13,7 +13,8 @@ int sh2potential_impl(
     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise>
         &M) noexcept {
 
-  if (max_degree >= dso::NormalizedLegendreFactors::MAX_SIZE_FOR_ALF_FACTORS) {
+  if (max_degree >=
+      dso::detail::NormalizedLegendreFactors::MAX_SIZE_FOR_ALF_FACTORS) {
     fprintf(stderr,
             "[ERROR] (Static) Size for NormalizedLegendreFactors must be "
             "augmented to perform computation (traceback: %s)\n",

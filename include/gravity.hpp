@@ -2,8 +2,8 @@
  * Computation of gravity acceleration using a geopotential model.
  */
 
-#ifndef __DSO_GEOPOTENTIAL_ACCELERATAION_HPP__
-#define __DSO_GEOPOTENTIAL_ACCELERATAION_HPP__
+#ifndef DSO_GEOPOTENTIAL_ACCELERATAION_HPP
+#define DSO_GEOPOTENTIAL_ACCELERATAION_HPP
 
 #include "eigen3/Eigen/Eigen"
 #include "stokes_coefficients.hpp"
@@ -56,6 +56,7 @@ struct PrecomputedShSqrts {
   static const int N = NormalizedLegendreFactors::MAX_SIZE_FOR_ALF_FACTORS;
   std::array<double, N> sqnp3;
   std::array<double, N> sqnp5;
+  PrecomputedShSqrts() noexcept;
 };
 const PrecomputedShSqrts &precomputed_sh_sqrts() noexcept;
 
@@ -113,10 +114,9 @@ const CunninghamWeights &cunningham_weights() noexcept;
  *       case, the resulting acceleration will be given in units of
  * [km/s^2].
  */
-// Eigen::Matrix<double, 3, 1>
-// point_mass_acceleration(const Eigen::Matrix<double, 3, 1> &r,
-//                         const Eigen::Matrix<double, 3, 1> &rcb,
-//                         double GMcb) noexcept;
+Eigen::Vector3d point_mass_acceleration(const Eigen::Vector3d &r,
+                                        const Eigen::Vector3d &rcb,
+                                        double GMcb) noexcept;
 
 /** Acceleration due to point mass at r_cb on a mass at r.
  *
@@ -141,10 +141,10 @@ const CunninghamWeights &cunningham_weights() noexcept;
  *       as it is used consistently for ALL inputs (r, rcb and GM). in this
  *       case, the resulting acceleration will be given in units of [km/s^2].
  */
-// Eigen::Matrix<double, 3, 1>
-// point_mass_acceleration(const Eigen::Matrix<double, 3, 1> &r,
-//                         const Eigen::Matrix<double, 3, 1> &rcb, double GMcb,
-//                         Eigen::Matrix<double, 3, 3> &jacobian) noexcept;
+Eigen::Vector3d
+point_mass_acceleration(const Eigen::Vector3d &r, const Eigen::Vector3d &rcb,
+                        double GMcb,
+                        Eigen::Matrix<double, 3, 3> &jacobian) noexcept;
 
 /** @brief Compute gravitational acceleration and gravity-gradient tensor from
  *         normalized spherical-harmonic Stokes coefficients.
@@ -281,9 +281,9 @@ const CunninghamWeights &cunningham_weights() noexcept;
  */
 [[nodiscard]]
 int sh2gradient(
-    const dso::StokesCoeffs &cs, const Eigen::Matrix<double, 3, 1> &r,
-    Eigen::Matrix<double, 3, 1> &acc, Eigen::Matrix<double, 3, 3> &gradient,
-    int max_degree = -1, int max_order = -1, double Re = -1, double GM = -1,
+    const dso::StokesCoeffs &cs, const Eigen::Vector3d &r, Eigen::Vector3d &acc,
+    Eigen::Matrix<double, 3, 3> &gradient, int max_degree = -1,
+    int max_order = -1, double Re = -1, double GM = -1,
     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> *W =
         nullptr,
     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> *M =
@@ -368,8 +368,8 @@ int sh2gradient(
  */
 [[nodiscard]]
 int sh2potential(
-    const dso::StokesCoeffs &cs, const Eigen::Matrix<double, 3, 1> &r,
-    double &U, int max_degree, int max_order, double Re, double GM,
+    const dso::StokesCoeffs &cs, const Eigen::Vector3d &r, double &U,
+    int max_degree, int max_order, double Re, double GM,
     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> *W,
     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise>
         *M) noexcept;
@@ -472,31 +472,30 @@ int sh2potential(
  */
 [[nodiscard]]
 int sh2gravity(
-    const dso::StokesCoeffs &cs, const Eigen::Matrix<double, 3, 1> &r,
+    const dso::StokesCoeffs &cs, const Eigen::Vector3d &r,
     Eigen::Vector3d &gravity, int max_degree, int max_order, double Re,
     double GM,
     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> *W,
     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise>
         *M) noexcept;
 
-/** @brief Compute elastic surface displacement due to loading from normalized
- *         spherical-harmonic Stokes coefficients.
+/** @brief Compute elastic surface displacement due to a load field represented
+ *         by normalized spherical-harmonic Stokes coefficients.
  *
- *  This routine evaluates, at a geocentric Cartesian position, the elastic
- *  deformation induced by a gravity/load field represented by normalized
- *  spherical-harmonic Stokes coefficients.
+ *  This routine evaluates, at a geocentric Cartesian ECEF position, the elastic
+ *  displacement induced by a load field represented by normalized Stokes
+ *  coefficients.
  *
- *  The implementation follows the same Cunningham-based first-derivative
- *  spherical-harmonic machinery used for gravity evaluation: for each degree
- *  @f$n@f$, it forms:
+ *  The load field is first used to compute:
  *
- *  - the degree contribution to the potential,
- *    @f$V_n(\mathbf{r})@f$,
- *  - and the degree contribution to the Cartesian gradient of the potential,
- *    @f$\nabla V_n(\mathbf{r})@f$.
+ *  - the scalar perturbing potential \f$ V(\mathbf{r}) \f$
+ *  - and its Cartesian gradient \f$ \nabla V(\mathbf{r}) \f$
  *
- *  The total displacement is then formed degree by degree from the vertical
- *  and horizontal load Love numbers:
+ *  by means of a Cunningham-style spherical-harmonic evaluation of the first
+ *  derivatives of the exterior potential.
+ *
+ *  The deformation is then assembled degree by degree using the load Love
+ *  numbers:
  *  @f[
  *    \mathbf{d} =
  *    \sum_{n=0}^{N}
@@ -512,33 +511,29 @@ int sh2gravity(
  *  where:
  *  - @f$h_n@f$ are the vertical load Love numbers,
  *  - @f$l_n@f$ are the horizontal load Love numbers,
- *  - @f$g@f$ is the local gravity magnitude used in the deformation model,
- *  - and @f$\hat{\mathbf{u}} = \mathbf{r}/\|\mathbf{r}\|@f$ is the radial unit
- *    vector at the evaluation point.
+ *  - @f$g@f$ is the local background gravity magnitude at the site,
+ *  - and @f$\hat{\mathbf{u}} = \mathbf{r}/\|\mathbf{r}\|@f$ is the outward
+ *    radial unit vector.
  *
- *  In addition to the displacement, the routine also returns:
- *  - the Cartesian gravity vector
- *    @f[
- *      \mathbf{g}(\mathbf{r}) = \nabla V(\mathbf{r}),
- *    @f]
- *  - and the scalar potential
- *    @f[
- *      V(\mathbf{r}).
- *    @f]
- *
- *  @param[in] cs Normalized Stokes coefficients defining the loading/gravity
- *                field.
+ *  @param[in] cs Normalized Stokes coefficients describing the load field.
  *
  *  @param[in] r Geocentric Cartesian position vector of the evaluation point,
  *               expressed in an Earth-fixed frame, in metres.
  *
- *  @param[out] dr Deformation vector in Cartesian components, in metres.
+ *  @param[out] dr Elastic deformation vector in Cartesian components, in
+ *                 metres.
  *
- *  @param[out] gravity Cartesian gravity vector @f$\nabla V(\mathbf{r})@f$,
- *                      in @f$[\mathrm{m}\,\mathrm{s}^{-2}]@f$.
+ *  @param[in] gravity Local background gravity magnitude at the site, in
+ *                     \f$[\mathrm{m}\,\mathrm{s}^{-2}]\f$.
+ *                     This quantity is independent of the load field supplied
+ *                     through @p cs.
  *
- *  @param[out] potential Scalar potential at the evaluation point, in
- *                        @f$[\mathrm{m}^2\,\mathrm{s}^{-2}]@f$.
+ *  @param[out] potential Scalar perturbing potential at the evaluation point,
+ *                        in \f$[\mathrm{m}^2\,\mathrm{s}^{-2}]\f$.
+ *
+ *  @param[out] potential_grad Cartesian gradient of the perturbing potential,
+ *                             i.e. \f$\nabla V(\mathbf{r})\f$, in
+ *                             \f$[\mathrm{m}\,\mathrm{s}^{-2}]\f$.
  *
  *  @param[in] max_degree Maximum spherical-harmonic degree. If negative, the
  *                        maximum available degree in @p cs is used.
@@ -547,11 +542,11 @@ int sh2gravity(
  *                       maximum admissible order is derived from @p cs and the
  *                       chosen degree truncation.
  *
- *  @param[in] Re Reference radius @f$R_e@f$ in metres. If negative, the value
+ *  @param[in] Re Reference radius \f$R_e\f$ in metres. If negative, the value
  *                stored in @p cs is used.
  *
- *  @param[in] GM Gravitational parameter @f$GM@f$ in
- *                @f$[\mathrm{m}^3\,\mathrm{s}^{-2}]@f$. If negative, the value
+ *  @param[in] GM Gravitational parameter \f$GM\f$ in
+ *                \f$[\mathrm{m}^3\,\mathrm{s}^{-2}]\f$. If negative, the value
  *                stored in @p cs is used.
  *
  *  @param[in] W Optional scratch matrix used internally to store one family of
@@ -573,37 +568,18 @@ int sh2gravity(
  *
  *  @note This routine evaluates the exterior field only.
  *
+ *  @note The scalar parameter @p gravity is the background local gravity
+ *        magnitude used in the deformation formula. It is not the norm of the
+ *        perturbing load-induced gradient returned in @p potential_grad.
+ *
  *  @warning If scratch matrices @p W and @p M are supplied by the caller, they
  *           must refer to distinct storage objects and must be large enough for
  *           the requested truncation.
- *
- *  @warning Correct deformation requires a consistent choice of load Love
- *           numbers and of the gravity magnitude entering the displacement
- *           formula.
- */
-/** @brief Compute surface displacement due to a surface load.
- *
- * Computes the 3D displacement vector, dr, of a point on the Earth's surface
- * due to surface mass loading, expressed in an Earth-centered coordinate
- * frame.
- *
- * dr = dr_radial + dr_tangential
- * dr_radial     = Σ h(n)/g * V(n) * r
- * dr_tangential = Σ l(n)/g * (grad V(n) - <grad V(n), r> * r)
- *
- * dr       : Total displacement vector at the observation point [m]
- * V(n)     : Load potential at spherical harmonic degree n
- * grad V(n): Gradient (vector) of V(n) at the observation point
- * g        : Local acceleration due to gravity
- * h(n),l(n): Load Love numbers for degree n (for vertical and horizontal
- *            deformation respectively)
- * r        : Local upward (radial) unit vector
- *
  */
 [[nodiscard]]
 int sh2deformation(
-    const dso::StokesCoeffs &cs, const Eigen::Matrix<double, 3, 1> &r,
-    Eigen::Vector3d &dr, Eigen::Vector3d &gravity, double &potential,
+    const dso::StokesCoeffs &cs, const Eigen::Vector3d &r, Eigen::Vector3d &dr,
+    double gravity, double &potential, Eigen::Vector3d &potential_grad,
     int max_degree, int max_order, double Re, double GM,
     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> *W,
     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise>
