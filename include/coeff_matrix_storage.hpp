@@ -31,8 +31,8 @@
  *  caller's data pointer actually has enough storage.
  */
 
-#ifndef __COMPACT_2D_SIMPLE_MATRIX_STORAGE_HPP__
-#define __COMPACT_2D_SIMPLE_MATRIX_STORAGE_HPP__
+#ifndef COMPACT_2D_SIMPLE_MATRIX_STORAGE_HPP
+#define COMPACT_2D_SIMPLE_MATRIX_STORAGE_HPP
 
 #include <algorithm>
 #include <cstddef>

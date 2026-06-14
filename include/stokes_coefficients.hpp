@@ -1,10 +1,32 @@
 /** @file
- * Declare a StokesCoefficients class, that can hold C and S coefficients for
- * a given degree and order, to assist handling of Spherical Harmonics.
+ *  @brief Container for fully normalized spherical-harmonic Stokes
+ *         coefficients.
+ *
+ *  This header defines @ref dso::StokesCoeffs, a lightweight container for
+ *  storing the cosine and sine coefficients of a spherical-harmonic model
+ *  together with its associated reference constants.
+ *
+ *  The class is intended for the standard geodetic **fully normalized**
+ *  convention:
+ *
+ *  - fully normalized Stokes coefficients
+ *    \f$\bar{C}_{nm}, \bar{S}_{nm}\f$,
+ *  - fully normalized associated Legendre / solid harmonic basis functions,
+ *  - and the corresponding normalized potential/derivative formulas.
+ *
+ *  In addition to the coefficient matrices, each instance stores:
+ *
+ *  - the gravitational parameter \f$GM\f$,
+ *  - the reference radius \f$R_e\f$,
+ *  - the maximum degree,
+ *  - and the maximum order.
+ *
+ *  Coefficients are stored internally in compact lower-triangular,
+ *  column-wise matrices.
  */
 
-#ifndef __STOKES_HARMONIC_POTENTIAL_COEFFICIENTS_HPP__
-#define __STOKES_HARMONIC_POTENTIAL_COEFFICIENTS_HPP__
+#ifndef STOKES_HARMONIC_POTENTIAL_COEFFICIENTS_HPP
+#define STOKES_HARMONIC_POTENTIAL_COEFFICIENTS_HPP
 
 #include "coeff_matrix_2d.hpp"
 #include "eigen3/Eigen/Eigen"
@@ -14,27 +36,42 @@
 namespace iers2010 {
 constexpr const double GMe = 1e0;
 constexpr const double Re = 1e0;
-} // namespace iers2010
+} /* namespace iers2010 */
 
 namespace dso {
 
-/** A class to hold Stokes Coefficients C and S.
+/** @brief Container for fully normalized spherical-harmonic Stokes
+ *         coefficients.
  *
- * Note that the Stokes coefficients ares stored in Lower Triangular but
- * RECTANGULAR matrices, i.e. matrices that have the same number of rows and
- * columns. Hence, desite the fact that each Stokes Coefficients instance
- * has two members to designate the number of coefficients (m_degree and
- * m_column), only one (m_rows) is relevant for storage. _Cnm and _Snm,
- * know nothing about degree!
+ *  This class stores the cosine and sine Stokes coefficients of a
+ *  spherical-harmonic model,
+ *  \f$\bar{C}_{nm}\f$ and \f$\bar{S}_{nm}\f$,
+ *  together with the reference constants required for potential-field
+ *  evaluation:
  *
- * C and S coefficients are stored in Lower-Triangular matrices, stored in
- * Column-Major manner.
- * Except for Stokes Coefficients, the class also holds the gravitational
- * constant GM and the radius Re, to be used when (and if) a spherical
- * harmonics expansion is needed.
+ *  - the gravitational parameter \f$GM\f$,
+ *  - and the reference radius \f$R_e\f$.
  *
- * For given degree (N) and order (M), the instance will hols the Stokes
- * coefficients Cnm for n in range [0, N].
+ *  The coefficient storage uses compact lower-triangular, column-wise
+ *  matrices, reflecting the admissible degree/order domain
+ *  \f$ 0 \le m \le n \f$
+ *
+ *  The logical model truncation is described by:
+ *
+ *  - @ref m_degree : the maximum degree,
+ *  - @ref m_order  : the maximum order.
+ *
+ *  Internally, both coefficient matrices are allocated as square triangular
+ *  matrices of dimension `(m_degree + 1)`, while @ref m_order determines the
+ *  highest physically meaningful order stored in the instance.
+ *
+ *  The class assumes the standard geodetic **fully normalized**
+ *  spherical-harmonic convention:
+ *
+ *  - fully normalized Stokes coefficients
+ *    \f$\bar{C}_{nm}, \bar{S}_{nm}\f$,
+ *  - fully normalized associated Legendre / solid harmonic basis functions,
+ *  - and the corresponding normalized derivative formulas.
  */
 class StokesCoeffs {
 private:
@@ -42,8 +79,6 @@ private:
   double _GM;
   /* reference radius of the spherical harmonics [m] */
   double _Re;
-  /* coefficients are normaliized (?) */
-  bool _cnormalized;
   /* maximum degree; should be same as _Cnm.rows() and _Snm.rows() */
   int m_degree;
   /* maximum order; can differ from _Cnm.rows() and _Snm.rows() if m_order <
@@ -57,22 +92,20 @@ private:
 public:
   /** Copy constructor */
   StokesCoeffs(const StokesCoeffs &other) noexcept
-      : _GM(other._GM), _Re(other._Re), _cnormalized(other._cnormalized),
-        m_degree(other.m_degree), m_order(other.m_order), _Cnm(other._Cnm),
-        _Snm(other._Snm) {}
+      : _GM(other._GM), _Re(other._Re), m_degree(other.m_degree),
+        m_order(other.m_order), _Cnm(other._Cnm), _Snm(other._Snm) {}
 
   /** Move constructor */
   StokesCoeffs(StokesCoeffs &&other) noexcept
-      : _GM(other._GM), _Re(other._Re), _cnormalized(other._cnormalized),
-        m_degree(other.m_degree), m_order(other.m_order),
-        _Cnm(std::move(other._Cnm)), _Snm(std::move(other._Snm)) {}
+      : _GM(other._GM), _Re(other._Re), m_degree(other.m_degree),
+        m_order(other.m_order), _Cnm(std::move(other._Cnm)),
+        _Snm(std::move(other._Snm)) {}
 
   /** Assignment operator */
   StokesCoeffs &operator=(const StokesCoeffs &other) noexcept {
     if (this != &other) {
       _GM = other._GM;
       _Re = other._Re;
-      _cnormalized = other._cnormalized;
       m_degree = other.m_degree;
       m_order = other.m_order;
       _Cnm = other._Cnm;
@@ -86,7 +119,6 @@ public:
     if (this != &other) {
       _GM = other._GM;
       _Re = other._Re;
-      _cnormalized = other._cnormalized;
       m_degree = other.m_degree;
       m_order = other.m_order;
       _Cnm = std::move(other._Cnm);
@@ -102,7 +134,6 @@ public:
     using std::swap;
     std::swap(_GM, b._GM);
     std::swap(_Re, b._Re);
-    std::swap(_cnormalized, b._cnormalized);
     std::swap(m_degree, b.m_degree);
     std::swap(m_order, b.m_order);
     swap(_Cnm, b._Cnm);
@@ -111,14 +142,28 @@ public:
 
   /** Default constructor */
   StokesCoeffs() noexcept
-      : _GM(::iers2010::GMe), _Re(::iers2010::Re), _cnormalized(true),
-        m_degree(0), m_order(0), _Cnm(0), _Snm(0) {}
+      : _GM(::iers2010::GMe), _Re(::iers2010::Re), m_degree(0), m_order(0),
+        _Cnm(0), _Snm(0) {}
 
-  /** Constructor given degree, order, GM and radius R */
+  /** @brief Construct a spherical-harmonic coefficient set.
+   *
+   *  @param[in] n Maximum degree.
+   *  @param[in] m Maximum order. If negative, the order is set equal to the
+   *               degree.
+   *  @param[in] GM Gravitational parameter in
+   *                \f$[\mathrm{m}^3\,\mathrm{s}^{-2}]\f$.
+   *  @param[in] Re Reference radius in metres.
+   *
+   * @note
+   * All Stokes coeffs are default-initialized to zero.
+   *
+   *  @pre `n >= 0`
+   *  @pre `0 <= m <= n` when `m >= 0`
+   */
   StokesCoeffs(int n, int m = -1, double GM = ::iers2010::GMe,
                double Re = ::iers2010::Re)
-      : _GM(GM), _Re(Re), _cnormalized(true), m_degree(n),
-        m_order((m >= 0) ? m : n), _Cnm(n + 1), _Snm(n + 1) {
+      : _GM(GM), _Re(Re), m_degree(n), m_order((m >= 0) ? m : n), _Cnm(n + 1),
+        _Snm(n + 1) {
     _Cnm.fill_with(0);
     _Snm.fill_with(0);
 #ifdef DEBUG
@@ -155,20 +200,21 @@ public:
     return 1;
   }
 
-  /** get max degree */
+  /** @brief get max degree */
   int max_degree() const noexcept { return m_degree; }
 
-  /** get max order */
+  /** @brief get max order */
   int max_order() const noexcept { return m_order; }
 
-  /** get gravitational constant times mass [kg^3/m^2] */
+  /** @brief Get the gravitational parameter @f$GM@f$.
+   *  @return Gravitational parameter in @f$[\mathrm{m}^3\,\mathrm{s}^{-2}]@f$.
+   */
   double GM() const noexcept { return _GM; }
 
-  /** get radious [m] */
+  /** @brief Get the reference radius.
+   *  @return Reference radius in metres.
+   */
   double Re() const noexcept { return _Re; }
-
-  /** return true if Stokes coefficients are normalized */
-  bool normalized() const noexcept { return _cnormalized; }
 
   /** get/set gravitational constant times mass [kg^3/m^2] */
   double &GM() noexcept { return _GM; }
@@ -176,70 +222,60 @@ public:
   /** get/set radious [m] */
   double &Re() noexcept { return _Re; }
 
-  /** get/set true/false depending on wether the Stokes coefficients are
-   * normalized
+  /** @brief Return the zonal coefficient @f$J_2@f$.
+   *
+   *  In the usual geodetic convention, /f$ J_2 = -\bar{C}_{20} \f$
+   *
+   *  @pre The model degree is at least 2.
    */
-  bool &normalized() noexcept { return _cnormalized; }
-
-  /** get the J2 term, i.e. -C_nm for n=2 and m=0 */
   double J2() const noexcept {
 #ifdef DEBUG
-    assert(m_dergee >= 2);
+    assert(m_degree >= 2);
 #endif
     return -_Cnm(2, 0);
   };
 
-  /** set the Cnm and Snm coefficients to zero */
+  /** @brief set the Cnm and Snm coefficients to zero */
   void clear() noexcept {
     _Cnm.fill_with(0e0);
     _Snm.fill_with(0e0);
   }
 
-  /** scale the Cnm and Snm coefficients */
+  /** @brief scale the Cnm and Snm coefficients */
   void scale(double factor) noexcept {
     _Cnm.multiply(factor);
     _Snm.multiply(factor);
   }
 
-  /** get the Cnm coefficient */
+  /** @brief get the Cnm coefficient */
   double C(int n, int m) const noexcept { return _Cnm(n, m); }
 
-  /** get/set the Cnm coefficient */
+  /** @brief get/set the Cnm coefficient */
   double &C(int n, int m) noexcept { return _Cnm(n, m); }
 
-  /** get the Snm coefficient */
-  double S(int n, int m) const noexcept {
-#ifdef DEBUG
-    assert(m = > 1);
-#endif
-    return _Snm(n, m);
-  }
+  /** @brief get the Snm coefficient */
+  double S(int n, int m) const noexcept { return _Snm(n, m); }
 
-  /** get/set the Snm coefficient */
-  double &S(int n, int m) noexcept {
-#ifdef DEBUG
-    assert(m = > 1);
-#endif
-    return _Snm(n, m);
-  }
+  /** @brief get/set the Snm coefficient */
+  double &S(int n, int m) noexcept { return _Snm(n, m); }
 
-  /** get the Cnm coefficient matrix */
+  /** @brief get the Cnm coefficient matrix */
   CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> &Cnm() noexcept {
     return _Cnm;
   }
 
-  /** get the Cnm coefficient matrix */
+  /** @brief get the Cnm coefficient matrix */
   const CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> &
   Cnm() const noexcept {
     return _Cnm;
   }
 
-  /** get the Snm coefficient matrix */
+  /** @brief get the Snm coefficient matrix */
   CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> &Snm() noexcept {
     return _Snm;
   }
 
-  /** get the Snm coefficient matrix */
+  /** @brief get the Snm coefficient matrix */
   const CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> &
   Snm() const noexcept {
     return _Snm;
@@ -285,8 +321,25 @@ public:
     return anm;
   }
 
+  /** @brief Construct Stokes coefficients from packed `anm` storage.
+   *
+   *  The lower triangular part of `anm` is interpreted as the cosine
+   *  coefficients @f$\bar{C}_{nm}@f$, including the diagonal.
+   *  The upper triangular part is interpreted as the sine coefficients
+   *  @f$\bar{S}_{nm}@f$ in transposed form.
+   *
+   *  @param[in] anm Packed coefficient matrix.
+   *  @param[in] max_order Maximum order to retain. If negative, the full order
+   *                       implied by `anm` is used.
+   *  @return A new @ref StokesCoeffs instance initialized from `anm`.
+   *
+   *  @pre `anm` is square.
+   */
   static StokesCoeffs from_anm(const Eigen::MatrixXd &anm,
                                int max_order = -1) noexcept {
+#ifdef DEBUG
+    assert(anm.rows() == anm.cols());
+#endif
     if (max_order < 0)
       max_order = anm.rows() - 1;
     int max_degree = anm.rows() - 1;

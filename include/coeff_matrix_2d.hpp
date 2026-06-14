@@ -1,4 +1,4 @@
-/** @file coeff_matrix_2d_documented.hpp
+/** @file
  *  @brief Compact 2D coefficient matrix with compile-time storage policy.
  *
  *  This header defines @ref dso::CoeffMatrix2D, a matrix-like container whose
@@ -31,11 +31,6 @@
  *    into a flat contiguous buffer.
  *  - @ref dso::CoeffMatrix2D owns that flat contiguous buffer.
  *
- *  This yields a few important properties:
- *  - no virtual dispatch,
- *  - layout-specific indexing resolved at compile time,
- *  - efficient contiguous flat loops over the underlying storage when possible.
- *
  *  ## Arithmetic philosophy
  *
  *  This class is **not** a general-purpose linear-algebra matrix.
@@ -65,8 +60,8 @@
  *  depending on the value category of the originating expression.
  */
 
-#ifndef __COMPACT_2D_SIMPLE_MATRIX_HPP__
-#define __COMPACT_2D_SIMPLE_MATRIX_HPP__
+#ifndef COMPACT_2D_SIMPLE_MATRIX_HPP
+#define COMPACT_2D_SIMPLE_MATRIX_HPP
 
 #include "coeff_matrix_storage.hpp"
 #include <cstring>
@@ -81,25 +76,6 @@
 #include <cstdint>
 #ifdef DSO_SIMD
 #include <immintrin.h>
-#endif
-
-/** @def DSO_RESTRICT
- *  @brief Compiler-specific spelling of a C/C++ "restrict"-like qualifier.
- *
- *  This macro is used only for low-level pointer kernels. It communicates to
- *  the compiler that the pointed-to memory ranges are assumed not to alias.
- *
- *  @note
- *  This is a performance contract. Passing aliased buffers to functions using
- *  `DSO_RESTRICT` is outside the intended usage contract and may lead to wrong
- *  code generation.
- */
-#if defined(__GNUC__) || defined(__clang__)
-#define DSO_RESTRICT __restrict__
-#elif defined(_MSC_VER)
-#define DSO_RESTRICT __restrict
-#else
-#define DSO_RESTRICT
 #endif
 
 /** @namespace detail
@@ -236,13 +212,13 @@ static constexpr bool _is_expr_v =
  *  @param[in] n Number of elements.
  *
  *  @pre `a` and `b` point to valid storage of at least `n` doubles.
- *  @pre The storage ranges are assumed not to alias, due to `DSO_RESTRICT`.
+ *  @pre The storage ranges are assumed not to alias, due to `__restrict__`.
  *
  *  @note
  *  This function is intentionally tiny and straightforward. It also serves as
  *  the semantic reference for the SIMD-accelerated version.
  */
-inline void axpy_scalar(double *DSO_RESTRICT a, const double *DSO_RESTRICT b,
+inline void axpy_scalar(double *__restrict__ a, const double *__restrict__ b,
                         double s, std::size_t n) noexcept {
   for (std::size_t i = 0; i < n; ++i) {
     a[i] += s * b[i];
@@ -283,8 +259,8 @@ inline void axpy_scalar(double *DSO_RESTRICT a, const double *DSO_RESTRICT b,
  *  guarantee imposed by @ref dso::CoeffMatrix2D::allocate_buffer when
  *  `DSO_SIMD` is enabled.
  */
-inline void axpy_lwtri_colwise(double *DSO_RESTRICT a,
-                               const double *DSO_RESTRICT b, double s,
+inline void axpy_lwtri_colwise(double *__restrict__ a,
+                               const double *__restrict__ b, double s,
                                std::size_t n) noexcept {
 #ifndef DSO_SIMD
   axpy_scalar(a, b, s, n);
@@ -415,11 +391,11 @@ inline void axpy_lwtri_colwise(double *DSO_RESTRICT a,
  *
  *  @warning
  *  Aliasing patterns such as `a == b1`, `a == b2`, or `b1 == b2` are outside
- *  the intended usage contract because the pointers carry `DSO_RESTRICT`.
+ *  the intended usage contract because the pointers carry `__restrict__`.
  */
-inline void axpy2_lwtri_colwise(double *DSO_RESTRICT a,
-                                const double *DSO_RESTRICT b1,
-                                const double *DSO_RESTRICT b2, double s1,
+inline void axpy2_lwtri_colwise(double *__restrict__ a,
+                                const double *__restrict__ b1,
+                                const double *__restrict__ b2, double s1,
                                 double s2, std::size_t n) noexcept {
 #ifndef DSO_SIMD
   for (std::size_t i = 0; i < n; ++i) {
@@ -1665,7 +1641,7 @@ operator+=(const _ScaledProxy<const CoeffMatrix2D &> &rhs) noexcept
  *
  *  @warning
  *  `this`, `B1`, and `B2` are expected to refer to distinct non-overlapping
- *  matrices, because the low-level kernel uses `DSO_RESTRICT`.
+ *  matrices, because the low-level kernel uses `__restrict__`.
  */
 #if __cplusplus >= 202002L
 void axpy2_inplace(double s1, const CoeffMatrix2D &B1, double s2,
@@ -1690,7 +1666,7 @@ void axpy2_inplace(double s1, const CoeffMatrix2D &B1, double s2,
                               m_storage.num_elements());
 }
 
-}; /* CoeffMatrix2D */
+}; // namespace dso
 
 /** @brief Non-member swap forwarding to @ref dso::CoeffMatrix2D::swap.
  *  @tparam S Storage policy.

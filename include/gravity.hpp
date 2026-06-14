@@ -1,97 +1,38 @@
 /** @file
- * Computation of gravity acceleration using a geopotential model.
+ *  @brief Spherical-harmonic gravity, potential, gradients, and load-induced
+ *         deformation in Cartesian coordinates.
+ *
+ *  This header declares routines for evaluating the exterior gravitational
+ *  field of a body represented by normalized spherical-harmonic Stokes
+ *  coefficients, together with a few closely related utilities.
+ *
+ *  The routines in this header are intended to work with the standard
+ *  **fully normalized** spherical-harmonic convention used in geodesy:
+ *
+ *  - fully normalized Stokes coefficients
+ *    \f$\bar{C}_{nm}, \bar{S}_{nm}\f$,
+ *  - fully normalized associated Legendre / solid spherical-harmonic basis
+ *    functions,
+ *  - and the corresponding fully normalized spherical-harmonic expansion of
+ *    the exterior potential.
+ *
+ *  The spherical-harmonic potential is evaluated in normalized form from
+ *  Stokes coefficients and real exterior solid harmonics. Cartesian first
+ *  and second derivatives follow the Cunningham formulation for efficient
+ *  evaluation of the gradient and Hessian of the potential.
+ *
+ *  @note
+ *  All spherical-harmonic routines declared here target the exterior field.
  */
 
-#ifndef DSO_GEOPOTENTIAL_ACCELERATAION_HPP
-#define DSO_GEOPOTENTIAL_ACCELERATAION_HPP
+#ifndef DSO_GEOPOTENTIAL_ACCELERATION_HPP
+#define DSO_GEOPOTENTIAL_ACCELERATION_HPP
 
 #include "eigen3/Eigen/Eigen"
+#include "shdetails.hpp"
 #include "stokes_coefficients.hpp"
 
 namespace dso {
-
-namespace detail {
-struct NormalizedLegendreFactors {
-  /* Max size for ALF factors; if degree is more than this, then it must
-   * be augmented. For now, OK
-   */
-  static constexpr const int MAX_SIZE_FOR_ALF_FACTORS = 201;
-
-  dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> f1;
-  dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> f2;
-  std::array<double, MAX_SIZE_FOR_ALF_FACTORS> f3;
-
-  /** @brief Precomputation of recurrence coefficients for normalized
-   * Legendre-based exterior solid harmonics.
-   *
-   *  This translation unit initializes @ref dso::NormalizedLegendreFactors,
-   *  a small helper object that stores recurrence coefficients reused by the
-   *  spherical-harmonic basis generator
-   *  @ref dso::gravity::sh_basis_cs_exterior.
-   *
-   *  The stored factors are:
-   *
-   *  - `f1(n,m)` : the coefficient multiplying the previous-degree term
-   *  - `f2(n,m)` : the coefficient multiplying the degree-`n-2` term
-   *  - `f3[n]`   : the auxiliary factor
-   *      @f$\sqrt{(2n+1)/(2n+3)}@f$, used later in acceleration formulas
-   *
-   *  ## Why precompute these factors?
-   *
-   * The basis-generation and gravity-evaluation routines are called many
-   * times, often in tight loops over many spacecraft positions or grid points.
-   * The recurrence coefficients depend only on `(n,m)` and the chosen
-   * normalization, not on the evaluation point. Therefore they are ideal
-   * candidates for a one-time precomputation.
-   *
-   * This constructor is intentionally written for correctness and clarity
-   * rather than micro-optimization: it runs once, whereas the basis-generation
-   * kernels may run extremely often.
-   */
-  NormalizedLegendreFactors() noexcept;
-}; /* struct NormalizedLegendreFactors */
-const NormalizedLegendreFactors &normalized_legendre_factors() noexcept;
-
-struct PrecomputedShSqrts {
-  static const int N = NormalizedLegendreFactors::MAX_SIZE_FOR_ALF_FACTORS;
-  std::array<double, N> sqnp3;
-  std::array<double, N> sqnp5;
-  PrecomputedShSqrts() noexcept;
-};
-const PrecomputedShSqrts &precomputed_sh_sqrts() noexcept;
-
-#ifdef PRECOMPUTED_SQRT_SHFACS
-struct CunninghamWeights {
-  static constexpr int MAX_N =
-      NormalizedLegendreFactors::MAX_SIZE_FOR_ALF_FACTORS;
-
-  /* degree-only */
-  std::array<double, MAX_N> acc_scale;
-  std::array<double, MAX_N> grad_scale;
-  std::array<double, MAX_N> d1_m0_wm0;
-  std::array<double, MAX_N> d1_m0_wp1;
-  std::array<double, MAX_N> d2_m0_wm0;
-  std::array<double, MAX_N> d2_m0_wp1;
-  std::array<double, MAX_N> d2_m0_wp2;
-
-  /* first derivatives: gravity + deformation */
-  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> d1_wm1;
-  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> d1_wm0;
-  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> d1_wp1;
-
-  /* second derivatives: gravity gradient */
-  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> d2_wm2;
-  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> d2_wm1;
-  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> d2_wm0;
-  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> d2_wp1;
-  CoeffMatrix2D<MatrixStorageType::LwTriangularColWise> d2_wp2;
-
-  CunninghamWeights();
-};
-const CunninghamWeights &cunningham_weights() noexcept;
-#endif
-
-} /* namespace detail */
 
 /** Acceleration due to point mass at r_cb on a mass at r.
  *
@@ -486,6 +427,13 @@ int sh2gravity(
  *  displacement induced by a load field represented by normalized Stokes
  *  coefficients.
  *
+ *  This formulation follows the classical load-deformation treatment of
+ *  Farrell (1972), in which the load field supplies the perturbing potential
+ *  and its gradient, while the scalar parameter @p gravity denotes the local
+ *  background gravity magnitude at the evaluation site. The Cartesian
+ *  evaluation of @f$\nabla V_n@f$ is performed here through Cunningham-style
+ *  spherical-harmonic derivative formulas.
+ *
  *  The load field is first used to compute:
  *
  *  - the scalar perturbing potential \f$ V(\mathbf{r}) \f$
@@ -575,6 +523,11 @@ int sh2gravity(
  *  @warning If scratch matrices @p W and @p M are supplied by the caller, they
  *           must refer to distinct storage objects and must be large enough for
  *           the requested truncation.
+ *
+ *  Reference:
+ *  W. E. Farrell, "Deformation of the Earth by surface loads",
+ *  Reviews of Geophysics and Space Physics, 10(3), 761-797, 1972.
+ *
  */
 [[nodiscard]]
 int sh2deformation(
@@ -584,56 +537,6 @@ int sh2deformation(
     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> *W,
     dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise>
         *M) noexcept;
-
-namespace gravity {
-/** @brief  Compute the spherical harmonic basis functions Cnm, Snm.
- *
- * This function computes the spherical harmonic basis functions Cnm, Snm up
- * to a specified degree n, and order m, evaluated at a 3D point in space.
- *
- * These functions are the real-valued solid spherical harmonics, commonly
- * used in geodesy and gravity field modeling. To be a bit more rigorous, these
- * are real exterior solid spherical harmonic basis functions, using fully
- * normalized associated Legendre functions.
- *
- * Computes the real solid spherical harmonics (4π normalized):
- * Cnm = (1/r**(n+1)) cos(mλ) Pnm(cosθ)
- * Snm = (1/r**(n+1)) sin(mλ) Pnm(cosθ)
- *
- * At the end of the function
- * C(n,m) holds the real-valued cosine basis Cnm
- * S(n,m) holds the real-valued sine basis Snm
- *
- * These can then be multiplied by the corresponding cnm, snm gravity field
- * coefficients to compute potential, acceleration, etc.
- *
- * @param[in] rsta The point of computation; should be exterior to Earth,
- * given in geocentric cartesian coordinates, ECEF [m]. in gravity-field/geodesy
- * use, this function is normally called with rsta = r / Re.
- * @param[in] max_degree Max degree of computation.
- * @param[in] max_order  Max order of computation.
- * @param[in] C    A lower triangular, column-wise matrix where the Cnm
- *                 coefficients are stored after computation. Its size should
- *                 be large enough to hold the computed coefficients, i.e.
- *                 (C.rows() >= max_degree+1) && (C.cols() >= max_degree+1).
- * @param[in] S    A lower triangular, column-wise matrix where the Snm
- *                 coefficients are stored after computation. Its size should
- *                 be large enough to hold the computed coefficients, i.e.
- *                 (S.rows() >= max_degree+1) && (S.cols() >= max_degree+1).
- * @return         Anything other than zero denotes an error.
- *
- * @note
- * This routine only guarantees the values in the triangular region
- * `0 <= m <= max_order`, `m <= n <= max_degree`.
- * Values outside that region are left unspecified.
- */
-[[nodiscard]]
-int sh_basis_cs_exterior(
-    const Eigen::Vector3d &rsta, int max_degree, int max_order,
-    dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise> &C,
-    dso::CoeffMatrix2D<dso::MatrixStorageType::LwTriangularColWise>
-        &S) noexcept;
-} /* namespace gravity */
 
 } /* namespace dso */
 
